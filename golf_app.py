@@ -36,13 +36,12 @@ def build_headers(token):
     }
 
 def generate_request_token():
-    # Configuration
+    # (unchanged from your original – kept as-is)
     salt = 'realwebapp'
     min_length = 16
     alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
     seps = 'cfhistuCFHISTU'
 
-    # shuffle
     def shuffle(alphabet_chars, salt_chars):
         if len(salt_chars) == 0:
             return alphabet_chars
@@ -58,7 +57,6 @@ def generate_request_token():
             v += 1
         return transformed
 
-    #convert number to alphabet representation
     def to_alphabet(num, alphabet_chars):
         result = []
         alphabet_len = len(alphabet_chars)
@@ -69,12 +67,10 @@ def generate_request_token():
                 break
         return result
 
-    # Initialize alphabet and seps
     salt_chars = list(salt)
     alphabet_chars = list(alphabet)
     seps_chars = list(seps)
 
-    # Get unique alphabet
     unique_alphabet = []
     seen = set()
     for char in alphabet_chars:
@@ -82,24 +78,18 @@ def generate_request_token():
             unique_alphabet.append(char)
             seen.add(char)
 
-    # Remove seps from alphabet
     alphabet_list = [c for c in unique_alphabet if c not in seps_chars]
-
-    # Filter seps
     filtered_seps = [c for c in seps_chars if c in unique_alphabet]
     seps_list = shuffle(filtered_seps, salt_chars)
 
-    # Adjust seps and alphabet
     if len(seps_list) == 0 or len(alphabet_list) / len(seps_list) > 3.5:
         seps_length = max(2, (len(alphabet_list) + 3) // 4)
         if seps_length > len(seps_list):
             diff = seps_length - len(seps_list)
             seps_list.extend(alphabet_list[:diff])
             alphabet_list = alphabet_list[diff:]
-
     alphabet_list = shuffle(alphabet_list, salt_chars)
 
-    # Setup guards
     guard_count = max(1, len(alphabet_list) // 12)
     if len(alphabet_list) < 3:
         guards = seps_list[:guard_count]
@@ -108,34 +98,27 @@ def generate_request_token():
         guards = alphabet_list[:guard_count]
         alphabet_list = alphabet_list[guard_count:]
 
-    # Encode timestamp
     timestamp_ms = int(time.time() * 1000)
     numbers = [timestamp_ms]
-
     alphabet_working = list(alphabet_list)
 
-    # Calculate numbersIdInt
     numbers_id_int = 0
     for i, number in enumerate(numbers):
         numbers_id_int += number % (i + 100)
 
-    # Lottery character
     ret = [alphabet_working[numbers_id_int % len(alphabet_working)]]
     lottery = list(ret)
 
-    # Encode each number
     for i, number in enumerate(numbers):
         buffer = lottery + salt_chars + alphabet_working
         alphabet_working = shuffle(alphabet_working, buffer)
         last = to_alphabet(number, alphabet_working)
         ret.extend(last)
-
         if i + 1 < len(numbers):
             char_code = ord(last[0])
             extra_number = number % (char_code + i)
             ret.append(seps_list[extra_number % len(seps_list)])
 
-    # Ensure minimum length
     if len(ret) < min_length:
         prefix_guard_index = (numbers_id_int + ord(ret[0])) % len(guards)
         ret.insert(0, guards[prefix_guard_index])
@@ -143,7 +126,6 @@ def generate_request_token():
             suffix_guard_index = (numbers_id_int + ord(ret[2])) % len(guards)
             ret.append(guards[suffix_guard_index])
 
-    # Extend to minimum length with shuffling
     half_length = len(alphabet_working) // 2
     while len(ret) < min_length:
         alphabet_working = shuffle(alphabet_working, alphabet_working)
@@ -159,22 +141,24 @@ token = generate_request_token()
 HEADERS = build_headers(token)
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Golf Player List", layout="wide")
-
-st.title("⛳ Golf Player List")
-st.markdown("""
-This tool fetches all active golfers from the RealSports API for the current day.
-""")
+st.set_page_config(page_title="Golf Rax", layout="wide")
+st.title("⛳ Golf Rax – Player Rankings")
+st.markdown(
+    "View current golf player rankings from the RealSports API "
+    "for the 2026 season."
+)
 
 # --- GLOBAL STORAGE ---
 @st.cache_resource
 class GlobalPlayerStore:
     def __init__(self):
-        self.data = pd.DataFrame(columns=['Player Name', 'Team', 'Details', 'ID'])
-    
+        self.data = pd.DataFrame(
+            columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
+        )
+
     def update(self, new_df):
         self.data = new_df
-        
+
     def get(self):
         return self.data
 
@@ -182,7 +166,6 @@ player_store = GlobalPlayerStore()
 
 # --- Helper Functions ---
 def get_fantasy_day():
-    """Returns the current date in US Eastern Time."""
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     us_time = utc_now - datetime.timedelta(hours=5)
     return us_time.date()
@@ -191,107 +174,179 @@ def fetch_golf_data(target_date):
     session = requests.Session()
     session.headers.update(HEADERS)
     golf_data = []
-    
-    active_date_str = str(target_date)
-    
-    # Updated to Ranking URL as requested
-    url = "https://web.realsports.io/rankings/sport/golf/entity/player/ranking/primary?season=2026"
-    
+
+    _ = str(target_date)
+    url = (
+        "https://web.realsports.io/"
+        "rankings/sport/golf/entity/player/ranking/primary?season=2026"
+    )
+
     try:
         r = session.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            raw_list = []
-            
-            # Robust Parsing: Handle List or Dictionary response
-            if isinstance(data, list):
-                raw_list = data
-            elif isinstance(data, dict):
-                # Try common keys found in ranking APIs
-                raw_list = data.get("players") or data.get("rankings") or data.get("data") or []
-            
-            for item in raw_list:
-                # Ranking endpoints often nest the actual player object inside a 'player' key
-                # Search endpoints usually have it at the top level
-                # This line handles both cases safely
-                player = item.get('player', item)
-                
-                # Check for basic required fields
-                if not isinstance(player, dict):
-                    continue
+        if r.status_code != 200:
+            st.error(f"API Error: {r.status_code}")
+            return [], _
+        data = r.json()
+        raw_list = []
 
-                full_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
-                if not full_name:
-                    full_name = player.get('displayName') or "Unknown"
-                
-                details_text = ""
-                details = player.get("details")
-                if details and isinstance(details, list) and len(details) > 0 and "text" in details[0]:
-                    details_text = details[0]["text"]
-                
-                golf_data.append({
-                    "Player Name": full_name,
+        if isinstance(data, list):
+            raw_list = data
+        elif isinstance(data, dict):
+            raw_list = (
+                data.get("players")
+                or data.get("rankings")
+                or data.get("data")
+                or []
+            )
+
+        for item in raw_list:
+            player = item.get('player', item)
+
+            if not isinstance(player, dict):
+                continue
+
+            full_name = (
+                f"{player.get('firstName', '')} {player.get('lastName', '')}"
+            ).strip()
+            if not full_name:
+                full_name = player.get('displayName') or "Unknown"
+
+            details_text = ""
+            details = player.get("details")
+            if (
+                details
+                and isinstance(details, list)
+                and len(details) > 0
+                and isinstance(details[0], dict)
+                and "text" in details[0]
+            ):
+                details_text = details[0]["text"]
+
+            # Try a few common fields for rank/points/active:
+            rank = (
+                item.get("rank")
+                or item.get("position")
+                or player.get("rank")
+                or player.get("position")
+            )
+            points = (
+                item.get("points")
+                or item.get("score")
+                or item.get("value")
+                or player.get("points")
+            )
+
+            active = (
+                player.get("active")
+                if isinstance(player.get("active"), bool)
+                else None
+            )
+
+            golf_data.append(
+                {
+                    "Rank": rank,
+                    "Player": full_name,
                     "Team": player.get('team', {}).get('abbreviation', 'N/A'),
+                    "Points": points,
+                    "Active": active,
                     "Details": details_text,
                     "ID": player.get('id', '')
-                })
+                }
+            )
     except Exception as e:
         st.error(f"API Request Failed: {e}")
-        pass
-            
-    return golf_data, active_date_str
+
+    return golf_data, _
 
 # --- Main UI ---
+top_left, top_right = st.columns([1, 4])
 
-col1, col2 = st.columns([1, 4])
-
-with col1:
+with top_left:
     st.write("### Actions")
-    fetch_btn = st.button("Fetch All Golfers", type="primary")
+    fetch_btn = st.button("Refresh Rankings", type="primary")
 
-with col2:
+with top_right:
+    df_players = player_store.get()
+
+    col_search, col_active = st.columns([3, 1])
+    with col_search:
+        search = st.text_input("Search players", "", placeholder="Type a name...")
+    with col_active:
+        active_only = st.checkbox("Active only", value=False)
+
     if fetch_btn:
         progress = st.progress(0)
         status = st.empty()
         try:
-            status.text("Fetching Golf data...")
+            status.text("Fetching golf rankings...")
             fetch_date = get_fantasy_day()
             data, date_str = fetch_golf_data(fetch_date)
-            
+
             if data:
                 df_new = pd.DataFrame(data)
-                # Dedup
-                df_new = df_new.drop_duplicates(subset=['Player Name'], keep='first')
-                df_new = df_new.sort_values(by="Player Name")
+
+                df_new = df_new.drop_duplicates(subset=['Player'], keep='first')
+
+                if "Rank" in df_new.columns:
+                    df_new = df_new.sort_values(
+                        by=["Rank", "Player"], na_position="last"
+                    )
+                else:
+                    df_new = df_new.sort_values(by="Player")
+
+                df_new = df_new[
+                    [
+                        "Rank",
+                        "Player",
+                        "Team",
+                        "Points",
+                        "Active",
+                        "Details",
+                        "ID",
+                    ]
+                ]
+
                 player_store.update(df_new)
-                st.success(f"✅ Fetched {len(df_new)} Golfers for {date_str}")
+                st.success(
+                    f"✅ Fetched {len(df_new)} golfers for season 2026 "
+                    f"(as of {date_str})"
+                )
             else:
-                st.warning("No players found. Is there a tournament active today?")
-                
+                st.warning(
+                    "No players found. Check if the RealSports ranking "
+                    "endpoint is returning data."
+                )
         except Exception as e:
             st.error(f"Error: {e}")
-        
         progress.empty()
         status.empty()
 
-    # Display Data
     df_players = player_store.get()
-
     if not df_players.empty:
-        st.write(f"### Player List ({len(df_players)})")
+        filtered = df_players.copy()
+
+        if active_only and "Active" in filtered.columns:
+            filtered = filtered[filtered["Active"] == True]
+
+        if search:
+            filtered = filtered[
+                filtered["Player"].str.contains(search, case=False, na=False)
+            ]
+
+        st.write(f"### Player Rankings ({len(filtered)})")
+
         st.dataframe(
-            df_players, 
+            filtered[["Rank", "Player", "Team", "Points"]],
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
         )
-        
-        # Download CSV
-        csv = df_players.to_csv(index=False).encode('utf-8')
+
+        csv = filtered.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Download as CSV",
             data=csv,
-            file_name='golf_players.csv',
-            mime='text/csv',
+            file_name="golf_rankings.csv",
+            mime="text/csv",
         )
     else:
-        st.info("Click 'Fetch All Golfers' to see the list.")
+        st.info("Click 'Refresh Rankings' to load the table.")
