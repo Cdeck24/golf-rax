@@ -159,6 +159,13 @@ st.markdown(
 )
 
 
+# --- Upload IDs CSV ---
+uploaded_ids = st.file_uploader("Upload All_Golfer_IDs.csv", type=["csv"])
+if not uploaded_ids:
+    st.info("Please upload All_Golfer_IDs.csv to build earnings.")
+    st.stop()
+
+
 # --- GLOBAL STORAGE ---
 @st.cache_resource
 class EarningsStore:
@@ -185,25 +192,21 @@ class EarningsStore:
 earnings_store = EarningsStore()
 
 
-# --- Load IDs from All_Golfer_IDs.csv ---
+# --- Load IDs from uploaded CSV ---
 @st.cache_data
-def load_golfer_ids():
-    # If the file is in the working directory:
-    df_ids = pd.read_csv("All_Golfer_IDs.csv")
+def load_golfer_ids(file):
+    df_ids = pd.read_csv(file)
     df_ids = df_ids.dropna(subset=["ID"])
     df_ids["ID"] = df_ids["ID"].astype(int)
     return df_ids[["Player", "Team", "PrimaryRanking", "ID"]]
 
 
 # --- Single-player earnings fetch for a given season ---
-def fetch_player_earnings(player_id: int, season: int):
-    session = create_session()
-
+def fetch_player_earnings(session: requests.Session, player_id: int, season: int):
     url = (
         f"{REAL_API_BASE}/userpassearnings/golf/season/{season}/"
         f"entity/player/{player_id}"
     )
-
     try:
         r = session.get(url, timeout=10)
         if r.status_code != 200:
@@ -226,10 +229,11 @@ def fetch_player_earnings(player_id: int, season: int):
 
 
 # --- Build earnings for all players, all seasons 2014–2026 ---
-def build_all_golf_earnings_multi_season(start_season: int = 2014, end_season: int = 2026):
-    df_ids = load_golfer_ids()
+def build_all_golf_earnings_multi_season(file, start_season: int = 2014, end_season: int = 2026):
+    df_ids = load_golfer_ids(file)
     seasons = list(range(start_season, end_season + 1))
 
+    session = create_session()
     results = []
 
     total_steps = len(df_ids) * len(seasons)
@@ -248,7 +252,7 @@ def build_all_golf_earnings_multi_season(start_season: int = 2014, end_season: i
                 f"Season {season} [{step}/{total_steps}]..."
             )
 
-            rec = fetch_player_earnings(player_id, season=season)
+            rec = fetch_player_earnings(session, player_id, season)
             if rec is not None:
                 results.append(
                     {
@@ -256,7 +260,7 @@ def build_all_golf_earnings_multi_season(start_season: int = 2014, end_season: i
                         "Team": row["Team"],
                         "PrimaryRanking": row["PrimaryRanking"],
                         "PlayerID": player_id,
-                        "Season": season,
+                        "Season": rec["Season"],         # unique per call
                         "SeasonLabel": rec["SeasonLabel"],
                         "TotalEarnings": rec["TotalEarnings"],
                     }
@@ -294,7 +298,7 @@ with top_left:
 
 with top_right:
     if build_multi_btn:
-        df_multi = build_all_golf_earnings_multi_season(2014, 2026)
+        df_multi = build_all_golf_earnings_multi_season(uploaded_ids, 2014, 2026)
         earnings_store.update_multi(df_multi)
 
     df_multi = earnings_store.get_multi()
@@ -303,9 +307,10 @@ with top_right:
         # Controls
         col_season, col_search = st.columns([1, 3])
         with col_season:
+            season_options = sorted(df_multi["Season"].dropna().unique().tolist())
             season_filter = st.selectbox(
                 "Filter by season",
-                options=["All"] + sorted(df_multi["Season"].dropna().unique().tolist()),
+                options=["All"] + season_options,
                 index=0,
             )
         with col_search:
