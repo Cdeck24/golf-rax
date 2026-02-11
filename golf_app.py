@@ -159,15 +159,24 @@ st.markdown(
 @st.cache_resource
 class GlobalPlayerStore:
     def __init__(self):
-        self.data = pd.DataFrame(
+        self.rankings = pd.DataFrame(
             columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
         )
+        self.all_players = pd.DataFrame(
+            columns=['Player', 'Team', 'ID', 'Sport']
+        )
 
-    def update(self, new_df: pd.DataFrame):
-        self.data = new_df
+    def update_rankings(self, new_df: pd.DataFrame):
+        self.rankings = new_df
 
-    def get(self) -> pd.DataFrame:
-        return self.data
+    def update_all_players(self, new_df: pd.DataFrame):
+        self.all_players = new_df
+
+    def get_rankings(self) -> pd.DataFrame:
+        return self.rankings
+
+    def get_all_players(self) -> pd.DataFrame:
+        return self.all_players
 
 
 player_store = GlobalPlayerStore()
@@ -180,11 +189,15 @@ def get_fantasy_day() -> datetime.date:
     return us_time.date()
 
 
-def fetch_golf_data(target_date: datetime.date):
+def create_session() -> requests.Session:
     session = requests.Session()
     token = generate_request_token()
     session.headers.update(build_headers(token))
+    return session
 
+
+def fetch_golf_rankings(target_date: datetime.date):
+    session = create_session()
     golf_data = []
     date_str = str(target_date)
 
@@ -196,22 +209,20 @@ def fetch_golf_data(target_date: datetime.date):
     try:
         r = session.get(url, timeout=10)
         if r.status_code != 200:
-            st.error(f"API Error: {r.status_code} – {r.text}")
+            st.error(f"Rankings API Error: {r.status_code} – {r.text}")
             return [], date_str
 
         data = r.json()
         if not isinstance(data, dict):
-            st.error("Unexpected API response format.")
+            st.error("Unexpected rankings API response format.")
             return [], date_str
 
-        # Your sample shows the list is under "items"
         raw_list = data.get("items", [])
         if not isinstance(raw_list, list):
-            st.error("Expected 'items' to be a list in API response.")
+            st.error("Expected 'items' list in rankings response.")
             return [], date_str
 
         for idx, item in enumerate(raw_list, start=1):
-            # item itself is the player record
             player = item
 
             full_name = (
@@ -220,28 +231,25 @@ def fetch_golf_data(target_date: datetime.date):
             if not full_name:
                 full_name = player.get('displayName') or "Unknown"
 
-            # No 'details' field in your sample; keep placeholder logic
             details_text = ""
 
             rank = (
-                item.get("value")      # ranking position from your JSON
+                item.get("value")
                 or item.get("rank")
                 or item.get("position")
-                or idx                 # fallback to list index if needed
+                or idx
             )
             points = (
-                item.get("rating")     # rating string from your JSON
+                item.get("rating")
                 or item.get("points")
                 or item.get("score")
                 or item.get("value")
             )
 
-            # No explicit "active" field; treat as None
             active = None
 
             team_abbrev = player.get('team', {}).get('abbreviation')
             if not team_abbrev and 'teamId' in player:
-                # We only have teamId in this endpoint; show that instead
                 team_abbrev = f"Team {player.get('teamId')}"
 
             golf_data.append(
@@ -256,10 +264,71 @@ def fetch_golf_data(target_date: datetime.date):
                 }
             )
     except Exception as e:
-        st.error(f"API Request Failed: {e}")
+        st.error(f"Rankings API Request Failed: {e}")
         return [], date_str
 
     return golf_data, date_str
+
+
+def fetch_all_golf_players():
+    """
+    Uses the golf players search endpoint you found:
+    https://web.realsports.io/players/sport/golf/search?includeNoOneOption=false
+    """
+    session = create_session()
+    url = (
+        f"{REAL_API_BASE}/players/sport/golf/search"
+        f"?includeNoOneOption=false"
+    )
+
+    players = []
+
+    try:
+        r = session.get(url, timeout=15)
+        if r.status_code != 200:
+            st.error(f"Players API Error: {r.status_code} – {r.text}")
+            return []
+
+        data = r.json()
+        # You may want to print once while testing:
+        # st.write("DEBUG players response:", data)
+
+        # Guessing structure similar to rankings: list under "items"
+        raw_list = data.get("items", [])
+        if not isinstance(raw_list, list):
+            # fallback: if the API returns directly a list
+            if isinstance(data, list):
+                raw_list = data
+            else:
+                st.error("Expected 'items' list in players response.")
+                return []
+
+        for item in raw_list:
+            player = item
+
+            full_name = (
+                f"{player.get('firstName', '')} {player.get('lastName', '')}"
+            ).strip()
+            if not full_name:
+                full_name = player.get('displayName') or "Unknown"
+
+            team_abbrev = player.get('team', {}).get('abbreviation')
+            if not team_abbrev and 'teamId' in player:
+                team_abbrev = f"Team {player.get('teamId')}"
+
+            players.append(
+                {
+                    "Player": full_name,
+                    "Team": team_abbrev or "N/A",
+                    "ID": player.get("id", ""),
+                    "Sport": player.get("sport", "golf"),
+                }
+            )
+    except Exception as e:
+        st.error(f"Players API Request Failed: {e}")
+        return []
+
+    return players
 
 
 # --- Main UI ---
@@ -267,24 +336,27 @@ top_left, top_right = st.columns([1, 4])
 
 with top_left:
     st.write("### Actions")
-    fetch_btn = st.button("Refresh Rankings", type="primary")
+    fetch_rankings_btn = st.button("Refresh Rankings", type="primary")
+    fetch_all_players_btn = st.button("Load All Players")
 
 with top_right:
-    df_players = player_store.get()
+    df_rankings = player_store.get_rankings()
+    df_all_players = player_store.get_all_players()
 
     col_search, col_active = st.columns([3, 1])
     with col_search:
         search = st.text_input("Search players", "", placeholder="Type a name...")
     with col_active:
-        active_only = st.checkbox("Active only", value=False)
+        active_only = st.checkbox("Active only (rankings)", value=False)
 
-    if fetch_btn:
+    # --- Fetch rankings ---
+    if fetch_rankings_btn:
         progress = st.progress(0)
         status = st.empty()
         try:
             status.text("Fetching golf rankings...")
             fetch_date = get_fantasy_day()
-            data, date_str = fetch_golf_data(fetch_date)
+            data, date_str = fetch_golf_rankings(fetch_date)
 
             if data:
                 df_new = pd.DataFrame(data)
@@ -309,47 +381,94 @@ with top_right:
                     ]
                 ]
 
-                player_store.update(df_new)
+                player_store.update_rankings(df_new)
                 st.success(
                     f"✅ Fetched {len(df_new)} golfers for season 2026 "
                     f"(as of {date_str})"
                 )
             else:
                 st.warning(
-                    "No players found. Check if the RealSports ranking "
-                    "endpoint is returning data."
+                    "No players found in rankings. "
+                    "Check if the RealSports ranking endpoint is returning data."
                 )
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Rankings Error: {e}")
         progress.empty()
         status.empty()
 
-    df_players = player_store.get()
-    if not df_players.empty:
-        filtered = df_players.copy()
+    # --- Fetch all players ---
+    if fetch_all_players_btn:
+        progress = st.progress(0)
+        status = st.empty()
+        try:
+            status.text("Fetching all golf players...")
+            all_players = fetch_all_golf_players()
+            if all_players:
+                df_all = pd.DataFrame(all_players)
+                df_all = df_all.drop_duplicates(subset=['Player', 'ID'], keep='first')
+                df_all = df_all.sort_values(by=["Player"])
+                player_store.update_all_players(df_all)
+                st.success(f"✅ Loaded {len(df_all)} golf players")
+            else:
+                st.warning(
+                    "No players returned from the players search endpoint."
+                )
+        except Exception as e:
+            st.error(f"Players Error: {e}")
+        progress.empty()
+        status.empty()
 
-        if active_only and "Active" in filtered.columns:
-            filtered = filtered[filtered["Active"] == True]
+    # --- Display rankings table ---
+    df_rankings = player_store.get_rankings()
+    if not df_rankings.empty:
+        filtered_rankings = df_rankings.copy()
+
+        if active_only and "Active" in filtered_rankings.columns:
+            filtered_rankings = filtered_rankings[filtered_rankings["Active"] == True]
 
         if search:
-            filtered = filtered[
-                filtered["Player"].str.contains(search, case=False, na=False)
+            filtered_rankings = filtered_rankings[
+                filtered_rankings["Player"].str.contains(search, case=False, na=False)
             ]
 
-        st.write(f"### Player Rankings ({len(filtered)})")
-
+        st.write(f"### Player Rankings ({len(filtered_rankings)})")
         st.dataframe(
-            filtered[["Rank", "Player", "Team", "Points"]],
+            filtered_rankings[["Rank", "Player", "Team", "Points"]],
             use_container_width=True,
             hide_index=True,
         )
 
-        csv = filtered.to_csv(index=False).encode("utf-8")
+        csv_rank = filtered_rankings.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="Download as CSV",
-            data=csv,
+            label="Download Rankings as CSV",
+            data=csv_rank,
             file_name="golf_rankings.csv",
             mime="text/csv",
         )
     else:
-        st.info("Click 'Refresh Rankings' to load the table.")
+        st.info("Click 'Refresh Rankings' to load the rankings table.")
+
+    # --- Display all players table ---
+    df_all_players = player_store.get_all_players()
+    if not df_all_players.empty:
+        df_all_filtered = df_all_players.copy()
+
+        if search:
+            df_all_filtered = df_all_filtered[
+                df_all_filtered["Player"].str.contains(search, case=False, na=False)
+            ]
+
+        st.write(f"### All Golf Players ({len(df_all_filtered)})")
+        st.dataframe(
+            df_all_filtered[["Player", "Team", "ID"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_all = df_all_filtered.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download All Players as CSV",
+            data=csv_all,
+            file_name="golf_all_players.csv",
+            mime="text/csv",
+        )
