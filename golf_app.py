@@ -160,12 +160,21 @@ class GlobalPlayerStore:
         self.rankings = pd.DataFrame(
             columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
         )
+        self.all_players = pd.DataFrame(
+            columns=['Player', 'Team', 'ID', 'Sport', 'PrimaryRanking', 'Position']
+        )
 
     def update_rankings(self, new_df: pd.DataFrame):
         self.rankings = new_df
 
+    def update_all_players(self, new_df: pd.DataFrame):
+        self.all_players = new_df
+
     def get_rankings(self) -> pd.DataFrame:
         return self.rankings
+
+    def get_all_players(self) -> pd.DataFrame:
+        return self.all_players
 
 
 player_store = GlobalPlayerStore()
@@ -259,15 +268,7 @@ def fetch_golf_rankings(target_date: datetime.date):
     return golf_data, date_str
 
 
-def search_golf_players(query: str):
-    """
-    Calls:
-    https://web.realsports.io/players/sport/golf/search?includeNoOneOption=false&query={query}
-    and parses the 'players' array.
-    """
-    if not query:
-        return []
-
+def search_golf_players_raw(query: str):
     session = create_session()
     sport = "golf"
     url = (
@@ -276,19 +277,66 @@ def search_golf_players(query: str):
         f"&query={query}"
     )
 
-    players = []
     try:
         r = session.get(url, timeout=15)
         if r.status_code != 200:
-            st.error(f"Players API Error: {r.status_code} – {r.text}")
             return []
-
         data = r.json()
-        raw_list = data.get("players", [])
-        if not isinstance(raw_list, list):
-            return []
+        return data.get("players", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
 
+
+def search_golf_players(query: str):
+    raw_list = search_golf_players_raw(query)
+    players = []
+
+    for item in raw_list:
+        full_name = (
+            f"{item.get('firstName', '')} {item.get('lastName', '')}"
+        ).strip() or item.get("displayName", "Unknown")
+
+        team_key = None
+        team = item.get("team") or {}
+        if isinstance(team, dict):
+            team_key = team.get("key")  # e.g. "USA"
+
+        players.append(
+            {
+                "Player": full_name,
+                "Team": (
+                    team_key
+                    or (f"Team {item.get('teamId')}" if item.get("teamId") else "N/A")
+                ),
+                "ID": item.get("id", ""),
+                "Sport": item.get("sport", "golf"),
+                "PrimaryRanking": item.get("primaryRanking"),
+                "Position": item.get("position"),
+                "Display": item.get("displayName"),
+            }
+        )
+
+    return players
+
+
+def fetch_all_golf_players_by_letters():
+    letters = list("abcdefghijklmnopqrstuvwxyz")
+    all_players = []
+    seen_ids = set()
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    total = len(letters)
+    for idx, letter in enumerate(letters, start=1):
+        status.text(f"Fetching players for '{letter}' ({idx}/{total})...")
+        raw_list = search_golf_players_raw(letter)
         for item in raw_list:
+            pid = item.get("id")
+            if not pid or pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+
             full_name = (
                 f"{item.get('firstName', '')} {item.get('lastName', '')}"
             ).strip() or item.get("displayName", "Unknown")
@@ -296,27 +344,28 @@ def search_golf_players(query: str):
             team_key = None
             team = item.get("team") or {}
             if isinstance(team, dict):
-                team_key = team.get("key")  # e.g. "USA"
+                team_key = team.get("key")
 
-            players.append(
+            all_players.append(
                 {
                     "Player": full_name,
                     "Team": (
                         team_key
                         or (f"Team {item.get('teamId')}" if item.get("teamId") else "N/A")
                     ),
-                    "ID": item.get("id", ""),
-                    "Sport": item.get("sport", sport),
+                    "ID": pid,
+                    "Sport": item.get("sport", "golf"),
                     "PrimaryRanking": item.get("primaryRanking"),
                     "Position": item.get("position"),
-                    "Display": item.get("displayName"),
                 }
             )
-    except Exception as e:
-        st.error(f"Players API Request Failed: {e}")
-        return []
 
-    return players
+        progress.progress(idx / total)
+        time.sleep(0.3)  # be gentle
+
+    progress.empty()
+    status.empty()
+    return all_players
 
 
 # --- Main UI ---
@@ -325,9 +374,11 @@ top_left, top_right = st.columns([1, 4])
 with top_left:
     st.write("### Actions")
     fetch_rankings_btn = st.button("Refresh Rankings", type="primary")
+    build_all_btn = st.button("Build approximate all‑players list (A–Z)")
 
 with top_right:
     df_rankings = player_store.get_rankings()
+    df_all_players = player_store.get_all_players()
 
     col_search, col_active = st.columns([3, 1])
     with col_search:
@@ -381,6 +432,23 @@ with top_right:
             st.error(f"Rankings Error: {e}")
         progress.empty()
         status.empty()
+
+    # --- Build approximate all‑players list via A–Z ---
+    if build_all_btn:
+        try:
+            all_players = fetch_all_golf_players_by_letters()
+            if all_players:
+                df_all = pd.DataFrame(all_players)
+                df_all = df_all.drop_duplicates(subset=["ID"], keep="first")
+                df_all = df_all.sort_values(by=["Player"])
+                player_store.update_all_players(df_all)
+                st.success(
+                    f"✅ Built approximate all‑players list with {len(df_all)} golfers"
+                )
+            else:
+                st.warning("No players returned from the A–Z sweep.")
+        except Exception as e:
+            st.error(f"All Players Error: {e}")
 
     # --- Display rankings table ---
     df_rankings = player_store.get_rankings()
@@ -443,5 +511,23 @@ with top_right:
             )
         else:
             st.warning("No players found for that search.")
-    else:
-        st.info("Type a name or letter above to query the Real golf player search API.")
+
+    # --- Display approximate all‑players table ---
+    df_all_players = player_store.get_all_players()
+    if not df_all_players.empty:
+        st.write(
+            f"### Approximate All Golf Players (A–Z sweep) – {len(df_all_players)}"
+        )
+        st.dataframe(
+            df_all_players[["Player", "Team", "PrimaryRanking", "ID"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_all = df_all_players.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download Approximate All Players as CSV",
+            data=csv_all,
+            file_name="golf_all_players_approx.csv",
+            mime="text/csv",
+        )
