@@ -144,49 +144,6 @@ def generate_request_token() -> str:
     return ''.join(ret)
 
 
-# --- Page Configuration ---
-st.set_page_config(page_title="Golf Rax", layout="wide")
-st.title("⛳ Golf Rax – Player Rankings")
-st.markdown(
-    "View current golf player rankings from the RealSports API "
-    "for the 2026 season."
-)
-
-
-# --- GLOBAL STORAGE ---
-@st.cache_resource
-class GlobalPlayerStore:
-    def __init__(self):
-        self.rankings = pd.DataFrame(
-            columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
-        )
-        self.all_players = pd.DataFrame(
-            columns=['Player', 'Team', 'ID', 'Sport', 'PrimaryRanking', 'Position']
-        )
-
-    def update_rankings(self, new_df: pd.DataFrame):
-        self.rankings = new_df
-
-    def update_all_players(self, new_df: pd.DataFrame):
-        self.all_players = new_df
-
-    def get_rankings(self) -> pd.DataFrame:
-        return self.rankings
-
-    def get_all_players(self) -> pd.DataFrame:
-        return self.all_players
-
-
-player_store = GlobalPlayerStore()
-
-
-# --- Helper Functions ---
-def get_fantasy_day() -> datetime.date:
-    utc_now = datetime.datetime.now(datetime.timezone.utc)
-    us_time = utc_now - datetime.timedelta(hours=5)
-    return us_time.date()
-
-
 def create_session() -> requests.Session:
     session = requests.Session()
     token = generate_request_token()
@@ -194,340 +151,206 @@ def create_session() -> requests.Session:
     return session
 
 
-def fetch_golf_rankings(target_date: datetime.date):
+# --- Page Configuration ---
+st.set_page_config(page_title="Golf Earnings 2014–2026", layout="wide")
+st.title("⛳ Golf Rax – Multi‑Season Earnings (2014–2026)")
+st.markdown(
+    "Build a table of golf earnings per player and season using RealSports endpoints."
+)
+
+
+# --- GLOBAL STORAGE ---
+@st.cache_resource
+class EarningsStore:
+    def __init__(self):
+        self.multi = pd.DataFrame(
+            columns=[
+                "Player",
+                "Team",
+                "PrimaryRanking",
+                "PlayerID",
+                "Season",
+                "SeasonLabel",
+                "TotalEarnings",
+            ]
+        )
+
+    def update_multi(self, df: pd.DataFrame):
+        self.multi = df
+
+    def get_multi(self) -> pd.DataFrame:
+        return self.multi
+
+
+earnings_store = EarningsStore()
+
+
+# --- Load IDs from All_Golfer_IDs.csv ---
+@st.cache_data
+def load_golfer_ids():
+    # If the file is in the working directory:
+    df_ids = pd.read_csv("All_Golfer_IDs.csv")
+    df_ids = df_ids.dropna(subset=["ID"])
+    df_ids["ID"] = df_ids["ID"].astype(int)
+    return df_ids[["Player", "Team", "PrimaryRanking", "ID"]]
+
+
+# --- Single-player earnings fetch for a given season ---
+def fetch_player_earnings(player_id: int, season: int):
     session = create_session()
-    golf_data = []
-    date_str = str(target_date)
 
     url = (
-        f"{REAL_API_BASE}/rankings/sport/golf/entity/player/"
-        f"ranking/primary?season=2026"
+        f"{REAL_API_BASE}/userpassearnings/golf/season/{season}/"
+        f"entity/player/{player_id}"
     )
 
     try:
         r = session.get(url, timeout=10)
         if r.status_code != 200:
-            st.error(f"Rankings API Error: {r.status_code} – {r.text}")
-            return [], date_str
+            return None
 
         data = r.json()
-        if not isinstance(data, dict):
-            st.error("Unexpected rankings API response format.")
-            return [], date_str
+        earnings_list = data.get("earnings", [])
+        info = data.get("info", {}) or {}
+        total = info.get("total", 0)
 
-        raw_list = data.get("items", [])
-        if not isinstance(raw_list, list):
-            st.error("Expected 'items' list in rankings response.")
-            return [], date_str
-
-        for idx, item in enumerate(raw_list, start=1):
-            player = item
-
-            full_name = (
-                f"{player.get('firstName', '')} {player.get('lastName', '')}"
-            ).strip()
-            if not full_name:
-                full_name = player.get('displayName') or "Unknown"
-
-            details_text = ""
-
-            rank = (
-                item.get("value")
-                or item.get("rank")
-                or item.get("position")
-                or idx
-            )
-            points = (
-                item.get("rating")
-                or item.get("points")
-                or item.get("score")
-                or item.get("value")
-            )
-
-            active = None
-
-            team_abbrev = player.get('team', {}).get('abbreviation')
-            if not team_abbrev and 'teamId' in player:
-                team_abbrev = f"Team {player.get('teamId')}"
-
-            golf_data.append(
-                {
-                    "Rank": rank,
-                    "Player": full_name,
-                    "Team": team_abbrev or 'N/A',
-                    "Points": points,
-                    "Active": active,
-                    "Details": details_text,
-                    "ID": player.get('id', '')
-                }
-            )
-    except Exception as e:
-        st.error(f"Rankings API Request Failed: {e}")
-        return [], date_str
-
-    return golf_data, date_str
-
-
-def search_golf_players_raw(query: str):
-    session = create_session()
-    sport = "golf"
-    url = (
-        f"{REAL_API_BASE}/players/sport/{sport}/search"
-        f"?includeNoOneOption=false"
-        f"&query={query}"
-    )
-
-    try:
-        r = session.get(url, timeout=15)
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        return data.get("players", []) if isinstance(data, dict) else []
+        return {
+            "Season": season,
+            "PlayerID": player_id,
+            "TotalEarnings": total,
+            "SeasonLabel": info.get("seasonLabel"),
+            "RawEarnings": earnings_list,
+        }
     except Exception:
-        return []
+        return None
 
 
-def search_golf_players(query: str):
-    raw_list = search_golf_players_raw(query)
-    players = []
+# --- Build earnings for all players, all seasons 2014–2026 ---
+def build_all_golf_earnings_multi_season(start_season: int = 2014, end_season: int = 2026):
+    df_ids = load_golfer_ids()
+    seasons = list(range(start_season, end_season + 1))
 
-    for item in raw_list:
-        full_name = (
-            f"{item.get('firstName', '')} {item.get('lastName', '')}"
-        ).strip() or item.get("displayName", "Unknown")
+    results = []
 
-        team_key = None
-        team = item.get("team") or {}
-        if isinstance(team, dict):
-            team_key = team.get("key")  # e.g. "USA"
-
-        players.append(
-            {
-                "Player": full_name,
-                "Team": (
-                    team_key
-                    or (f"Team {item.get('teamId')}" if item.get("teamId") else "N/A")
-                ),
-                "ID": item.get("id", ""),
-                "Sport": item.get("sport", "golf"),
-                "PrimaryRanking": item.get("primaryRanking"),
-                "Position": item.get("position"),
-                "Display": item.get("displayName"),
-            }
-        )
-
-    return players
-
-
-def fetch_all_golf_players_by_letters():
-    letters = list("abcdefghijklmnopqrstuvwxyz")
-    all_players = []
-    seen_ids = set()
-
+    total_steps = len(df_ids) * len(seasons)
+    step = 0
     progress = st.progress(0)
     status = st.empty()
 
-    total = len(letters)
-    for idx, letter in enumerate(letters, start=1):
-        status.text(f"Fetching players for '{letter}' ({idx}/{total})...")
-        raw_list = search_golf_players_raw(letter)
-        for item in raw_list:
-            pid = item.get("id")
-            if not pid or pid in seen_ids:
-                continue
-            seen_ids.add(pid)
+    for _, row in df_ids.iterrows():
+        player_id = int(row["ID"])
+        player_name = row["Player"]
 
-            full_name = (
-                f"{item.get('firstName', '')} {item.get('lastName', '')}"
-            ).strip() or item.get("displayName", "Unknown")
-
-            team_key = None
-            team = item.get("team") or {}
-            if isinstance(team, dict):
-                team_key = team.get("key")
-
-            all_players.append(
-                {
-                    "Player": full_name,
-                    "Team": (
-                        team_key
-                        or (f"Team {item.get('teamId')}" if item.get("teamId") else "N/A")
-                    ),
-                    "ID": pid,
-                    "Sport": item.get("sport", "golf"),
-                    "PrimaryRanking": item.get("primaryRanking"),
-                    "Position": item.get("position"),
-                }
+        for season in seasons:
+            step += 1
+            status.text(
+                f"Fetching earnings for {player_name} ({player_id}) – "
+                f"Season {season} [{step}/{total_steps}]..."
             )
 
-        progress.progress(idx / total)
-        time.sleep(0.3)  # be gentle
+            rec = fetch_player_earnings(player_id, season=season)
+            if rec is not None:
+                results.append(
+                    {
+                        "Player": player_name,
+                        "Team": row["Team"],
+                        "PrimaryRanking": row["PrimaryRanking"],
+                        "PlayerID": player_id,
+                        "Season": season,
+                        "SeasonLabel": rec["SeasonLabel"],
+                        "TotalEarnings": rec["TotalEarnings"],
+                    }
+                )
+
+            progress.progress(step / total_steps)
+            time.sleep(0.05)  # throttle a bit
 
     progress.empty()
     status.empty()
-    return all_players
+
+    if not results:
+        return pd.DataFrame(
+            columns=[
+                "Player",
+                "Team",
+                "PrimaryRanking",
+                "PlayerID",
+                "Season",
+                "SeasonLabel",
+                "TotalEarnings",
+            ]
+        )
+
+    df = pd.DataFrame(results)
+    return df
 
 
-# --- Main UI ---
+# --- UI ---
 top_left, top_right = st.columns([1, 4])
 
 with top_left:
     st.write("### Actions")
-    fetch_rankings_btn = st.button("Refresh Rankings", type="primary")
-    build_all_btn = st.button("Build approximate all‑players list (A–Z)")
+    build_multi_btn = st.button("Build earnings 2014–2026", type="primary")
 
 with top_right:
-    df_rankings = player_store.get_rankings()
-    df_all_players = player_store.get_all_players()
+    if build_multi_btn:
+        df_multi = build_all_golf_earnings_multi_season(2014, 2026)
+        earnings_store.update_multi(df_multi)
 
-    col_search, col_active = st.columns([3, 1])
-    with col_search:
-        search = st.text_input("Search rankings table", "", placeholder="Type a name...")
-    with col_active:
-        active_only = st.checkbox("Active only (rankings)", value=False)
+    df_multi = earnings_store.get_multi()
 
-    # --- Fetch rankings ---
-    if fetch_rankings_btn:
-        progress = st.progress(0)
-        status = st.empty()
-        try:
-            status.text("Fetching golf rankings...")
-            fetch_date = get_fantasy_day()
-            data, date_str = fetch_golf_rankings(fetch_date)
+    if not df_multi.empty:
+        # Controls
+        col_season, col_search = st.columns([1, 3])
+        with col_season:
+            season_filter = st.selectbox(
+                "Filter by season",
+                options=["All"] + sorted(df_multi["Season"].dropna().unique().tolist()),
+                index=0,
+            )
+        with col_search:
+            name_filter = st.text_input(
+                "Search by player name", "", placeholder="Type part of a name..."
+            )
 
-            if data:
-                df_new = pd.DataFrame(data)
-                df_new = df_new.drop_duplicates(subset=['Player'], keep='first')
+        df_view = df_multi.copy()
+        if season_filter != "All":
+            df_view = df_view[df_view["Season"] == season_filter]
 
-                if "Rank" in df_new.columns:
-                    df_new = df_new.sort_values(
-                        by=["Rank", "Player"], na_position="last"
-                    )
-                else:
-                    df_new = df_new.sort_values(by="Player")
-
-                df_new = df_new[
-                    [
-                        "Rank",
-                        "Player",
-                        "Team",
-                        "Points",
-                        "Active",
-                        "Details",
-                        "ID",
-                    ]
-                ]
-
-                player_store.update_rankings(df_new)
-                st.success(
-                    f"✅ Fetched {len(df_new)} golfers for season 2026 "
-                    f"(as of {date_str})"
-                )
-            else:
-                st.warning(
-                    "No players found in rankings. "
-                    "Check if the RealSports ranking endpoint is returning data."
-                )
-        except Exception as e:
-            st.error(f"Rankings Error: {e}")
-        progress.empty()
-        status.empty()
-
-    # --- Build approximate all‑players list via A–Z ---
-    if build_all_btn:
-        try:
-            all_players = fetch_all_golf_players_by_letters()
-            if all_players:
-                df_all = pd.DataFrame(all_players)
-                df_all = df_all.drop_duplicates(subset=["ID"], keep="first")
-                df_all = df_all.sort_values(by=["Player"])
-                player_store.update_all_players(df_all)
-                st.success(
-                    f"✅ Built approximate all‑players list with {len(df_all)} golfers"
-                )
-            else:
-                st.warning("No players returned from the A–Z sweep.")
-        except Exception as e:
-            st.error(f"All Players Error: {e}")
-
-    # --- Display rankings table ---
-    df_rankings = player_store.get_rankings()
-    if not df_rankings.empty:
-        filtered_rankings = df_rankings.copy()
-
-        if active_only and "Active" in filtered_rankings.columns:
-            filtered_rankings = filtered_rankings[filtered_rankings["Active"] == True]
-
-        if search:
-            filtered_rankings = filtered_rankings[
-                filtered_rankings["Player"].str.contains(search, case=False, na=False)
+        if name_filter:
+            df_view = df_view[
+                df_view["Player"].str.contains(name_filter, case=False, na=False)
             ]
 
-        st.write(f"### Player Rankings ({len(filtered_rankings)})")
+        df_view = df_view.sort_values(
+            by=["Season", "TotalEarnings", "Player"],
+            ascending=[True, False, True],
+        )
+
+        st.write(
+            f"Rows: {len(df_view)} (player × season; 2014–2026 with any earnings)"
+        )
         st.dataframe(
-            filtered_rankings[["Rank", "Player", "Team", "Points"]],
+            df_view[
+                [
+                    "Season",
+                    "Player",
+                    "Team",
+                    "PrimaryRanking",
+                    "PlayerID",
+                    "TotalEarnings",
+                ]
+            ],
             use_container_width=True,
             hide_index=True,
         )
 
-        csv_rank = filtered_rankings.to_csv(index=False).encode("utf-8")
+        csv_multi = df_view.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="Download Rankings as CSV",
-            data=csv_rank,
-            file_name="golf_rankings.csv",
+            label="Download filtered earnings as CSV",
+            data=csv_multi,
+            file_name="golf_all_earnings_2014_2026_filtered.csv",
             mime="text/csv",
         )
     else:
-        st.info("Click 'Refresh Rankings' to load the rankings table.")
-
-    # --- Live golf player search (API) ---
-    st.write("### Search Golf Players (Real search API)")
-    player_query = st.text_input(
-        "Search golf players (e.g. 's', 'Scheffler', 'Rory', 'Tiger')",
-        "",
-        key="player_search",
-    )
-
-    if player_query:
-        search_results = search_golf_players(player_query)
-        if search_results:
-            df_search = pd.DataFrame(search_results)
-            df_search = df_search.drop_duplicates(subset=["Player", "ID"], keep="first")
-            df_search = df_search.sort_values(by=["Player"])
-
-            st.write(f"Search Results ({len(df_search)})")
-            st.dataframe(
-                df_search[["Player", "Team", "PrimaryRanking", "ID"]],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            csv_search = df_search.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="Download Search Results as CSV",
-                data=csv_search,
-                file_name="golf_player_search.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning("No players found for that search.")
-
-    # --- Display approximate all‑players table ---
-    df_all_players = player_store.get_all_players()
-    if not df_all_players.empty:
-        st.write(
-            f"### Approximate All Golf Players (A–Z sweep) – {len(df_all_players)}"
-        )
-        st.dataframe(
-            df_all_players[["Player", "Team", "PrimaryRanking", "ID"]],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        csv_all = df_all_players.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download Approximate All Players as CSV",
-            data=csv_all,
-            file_name="golf_all_players_approx.csv",
-            mime="text/csv",
-        )
+        st.info("Click 'Build earnings 2014–2026' to start fetching data.")
