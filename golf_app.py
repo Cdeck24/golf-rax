@@ -18,9 +18,9 @@ DEFAULT_USER_AGENT = (
 DEFAULT_SEC_CH_UA = '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"'
 DEVICE_NAME = 'Chrome on Windows'
 
-# Load secrets from environment (set these locally or via Streamlit secrets)
-DEVICE_UUID = os.getenv("REAL_DEVICE_UUID")
-REAL_AUTH_TOKEN = os.getenv("REAL_AUTH_TOKEN")
+# Your original values (only safe if kept private and local)
+DEVICE_UUID = '0e497d76-7bd5-4cf5-b63c-f194d1d4cbcf'
+REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f'
 
 # --- HEADERS & TOKEN GENERATION ---
 def build_headers(token: str) -> dict:
@@ -195,7 +195,7 @@ def fetch_golf_data(target_date: datetime.date):
     try:
         r = session.get(url, timeout=10)
         if r.status_code != 200:
-            st.error(f"API Error: {r.status_code}")
+            st.error(f"API Error: {r.status_code} – {r.text}")
             return [], date_str
 
         data = r.json()
