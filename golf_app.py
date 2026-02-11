@@ -160,21 +160,12 @@ class GlobalPlayerStore:
         self.rankings = pd.DataFrame(
             columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
         )
-        self.all_players = pd.DataFrame(
-            columns=['Player', 'Team', 'ID', 'Sport']
-        )
 
     def update_rankings(self, new_df: pd.DataFrame):
         self.rankings = new_df
 
-    def update_all_players(self, new_df: pd.DataFrame):
-        self.all_players = new_df
-
     def get_rankings(self) -> pd.DataFrame:
         return self.rankings
-
-    def get_all_players(self) -> pd.DataFrame:
-        return self.all_players
 
 
 player_store = GlobalPlayerStore()
@@ -268,82 +259,64 @@ def fetch_golf_rankings(target_date: datetime.date):
     return golf_data, date_str
 
 
-def fetch_golf_players_by_letter(letter: str):
+def search_golf_players(query: str):
     """
-    Use the simpler search form:
-    /players/sport/golf/search?includeNoOneOption=false&query={letter}
+    Calls:
+    https://web.realsports.io/players/sport/golf/search?includeNoOneOption=false&query={query}
+    and parses the 'players' array.
     """
+    if not query:
+        return []
+
     session = create_session()
     sport = "golf"
-
     url = (
         f"{REAL_API_BASE}/players/sport/{sport}/search"
         f"?includeNoOneOption=false"
-        f"&query={letter}"
+        f"&query={query}"
     )
 
     players = []
     try:
         r = session.get(url, timeout=15)
         if r.status_code != 200:
-            st.error(f"Players API Error ({letter}): {r.status_code} – {r.text}")
+            st.error(f"Players API Error: {r.status_code} – {r.text}")
             return []
 
         data = r.json()
-        raw_list = data.get("items", []) if isinstance(data, dict) else data
+        raw_list = data.get("players", [])
         if not isinstance(raw_list, list):
             return []
 
         for item in raw_list:
             full_name = (
                 f"{item.get('firstName', '')} {item.get('lastName', '')}"
-            ).strip()
-            if not full_name:
-                full_name = item.get("displayName", "Unknown")
+            ).strip() or item.get("displayName", "Unknown")
 
-            team_abbrev = item.get('team', {}).get('abbreviation')
-            if not team_abbrev and 'teamId' in item:
-                team_abbrev = f"Team {item.get('teamId')}"
+            team_key = None
+            team = item.get("team") or {}
+            if isinstance(team, dict):
+                team_key = team.get("key")  # e.g. "USA"
 
             players.append(
                 {
                     "Player": full_name,
-                    "Team": team_abbrev or "N/A",
+                    "Team": (
+                        team_key
+                        or (f"Team {item.get('teamId')}" if item.get("teamId") else "N/A")
+                    ),
                     "ID": item.get("id", ""),
                     "Sport": item.get("sport", sport),
+                    "PrimaryRanking": item.get("primaryRanking"),
+                    "Position": item.get("position"),
+                    "Display": item.get("displayName"),
                 }
             )
     except Exception as e:
-        st.error(f"Players API Request Failed ({letter}): {e}")
+        st.error(f"Players API Request Failed: {e}")
         return []
 
     return players
-
-
-def fetch_all_golf_players_via_letters():
-    letters = list("abcdefghijklmnopqrstuvwxyz")
-    all_players = []
-    seen_ids = set()
-
-    progress = st.progress(0)
-    status = st.empty()
-
-    total = len(letters)
-    for idx, letter in enumerate(letters, start=1):
-        status.text(f"Fetching players for '{letter}' ({idx}/{total})...")
-        batch = fetch_golf_players_by_letter(letter)
-        for p in batch:
-            pid = p["ID"]
-            if pid and pid not in seen_ids:
-                seen_ids.add(pid)
-                all_players.append(p)
-
-        progress.progress(idx / total)
-
-    progress.empty()
-    status.empty()
-
-    return all_players
 
 
 # --- Main UI ---
@@ -352,15 +325,13 @@ top_left, top_right = st.columns([1, 4])
 with top_left:
     st.write("### Actions")
     fetch_rankings_btn = st.button("Refresh Rankings", type="primary")
-    fetch_all_players_btn = st.button("Build All Players (A–Z)")
 
 with top_right:
     df_rankings = player_store.get_rankings()
-    df_all_players = player_store.get_all_players()
 
     col_search, col_active = st.columns([3, 1])
     with col_search:
-        search = st.text_input("Search players", "", placeholder="Type a name...")
+        search = st.text_input("Search rankings table", "", placeholder="Type a name...")
     with col_active:
         active_only = st.checkbox("Active only (rankings)", value=False)
 
@@ -411,23 +382,6 @@ with top_right:
         progress.empty()
         status.empty()
 
-    # --- Fetch all players via A–Z search ---
-    if fetch_all_players_btn:
-        try:
-            all_players = fetch_all_golf_players_via_letters()
-            if all_players:
-                df_all = pd.DataFrame(all_players)
-                df_all = df_all.drop_duplicates(subset=['Player', 'ID'], keep='first')
-                df_all = df_all.sort_values(by=["Player"])
-                player_store.update_all_players(df_all)
-                st.success(f"✅ Built approximate list of {len(df_all)} golf players")
-            else:
-                st.warning(
-                    "No players returned from the search‑by‑letter sweep."
-                )
-        except Exception as e:
-            st.error(f"All Players Error: {e}")
-
     # --- Display rankings table ---
     df_rankings = player_store.get_rankings()
     if not df_rankings.empty:
@@ -458,29 +412,36 @@ with top_right:
     else:
         st.info("Click 'Refresh Rankings' to load the rankings table.")
 
-    # --- Display all players table ---
-    df_all_players = player_store.get_all_players()
-    if not df_all_players.empty:
-        df_all_filtered = df_all_players.copy()
+    # --- Live golf player search (API) ---
+    st.write("### Search Golf Players (Real search API)")
+    player_query = st.text_input(
+        "Search golf players (e.g. 's', 'Scheffler', 'Rory', 'Tiger')",
+        "",
+        key="player_search",
+    )
 
-        if search:
-            df_all_filtered = df_all_filtered[
-                df_all_filtered["Player"].str.contains(search, case=False, na=False)
-            ]
+    if player_query:
+        search_results = search_golf_players(player_query)
+        if search_results:
+            df_search = pd.DataFrame(search_results)
+            df_search = df_search.drop_duplicates(subset=["Player", "ID"], keep="first")
+            df_search = df_search.sort_values(by=["Player"])
 
-        st.write(f"### All Golf Players (A–Z sweep) – {len(df_all_filtered)}")
-        st.dataframe(
-            df_all_filtered[["Player", "Team", "ID"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+            st.write(f"Search Results ({len(df_search)})")
+            st.dataframe(
+                df_search[["Player", "Team", "PrimaryRanking", "ID"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
-        csv_all = df_all_filtered.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download All Players as CSV",
-            data=csv_all,
-            file_name="golf_all_players.csv",
-            mime="text/csv",
-        )
+            csv_search = df_search.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="Download Search Results as CSV",
+                data=csv_search,
+                file_name="golf_player_search.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("No players found for that search.")
     else:
-        st.info("Click 'Build All Players (A–Z)' to construct an approximate full list.")
+        st.info("Type a name or letter above to query the Real golf player search API.")
