@@ -1,7 +1,5 @@
-import os
 import time
 import datetime
-import io
 
 import streamlit as st
 import requests
@@ -270,65 +268,81 @@ def fetch_golf_rankings(target_date: datetime.date):
     return golf_data, date_str
 
 
-def fetch_all_golf_players():
-    """
-    Uses the golf players search endpoint you found:
-    https://web.realsports.io/players/sport/golf/search?includeNoOneOption=false
-    """
+def fetch_golf_players_by_letter(letter: str, target_date: datetime.date):
     session = create_session()
+    date_str = str(target_date)
+    sport = "golf"
+
     url = (
-        f"{REAL_API_BASE}/players/sport/golf/search"
-        f"?includeNoOneOption=false"
+        f"{REAL_API_BASE}/players/sport/{sport}/search"
+        f"?day={date_str}&includeNoOneOption=false"
+        f"&query={letter}&searchType=ratingLineup"
     )
 
     players = []
-
     try:
         r = session.get(url, timeout=15)
         if r.status_code != 200:
-            st.error(f"Players API Error: {r.status_code} – {r.text}")
+            st.error(f"Players API Error ({letter}): {r.status_code} – {r.text}")
             return []
 
         data = r.json()
-        # You may want to print once while testing:
-        # st.write("DEBUG players response:", data)
-
-        # Guessing structure similar to rankings: list under "items"
-        raw_list = data.get("items", [])
+        raw_list = data.get("items", []) if isinstance(data, dict) else data
         if not isinstance(raw_list, list):
-            # fallback: if the API returns directly a list
-            if isinstance(data, list):
-                raw_list = data
-            else:
-                st.error("Expected 'items' list in players response.")
-                return []
+            return []
 
         for item in raw_list:
-            player = item
-
             full_name = (
-                f"{player.get('firstName', '')} {player.get('lastName', '')}"
+                f"{item.get('firstName', '')} {item.get('lastName', '')}"
             ).strip()
             if not full_name:
-                full_name = player.get('displayName') or "Unknown"
+                full_name = item.get("displayName", "Unknown")
 
-            team_abbrev = player.get('team', {}).get('abbreviation')
-            if not team_abbrev and 'teamId' in player:
-                team_abbrev = f"Team {player.get('teamId')}"
+            team_abbrev = item.get('team', {}).get('abbreviation')
+            if not team_abbrev and 'teamId' in item:
+                team_abbrev = f"Team {item.get('teamId')}"
 
             players.append(
                 {
                     "Player": full_name,
                     "Team": team_abbrev or "N/A",
-                    "ID": player.get("id", ""),
-                    "Sport": player.get("sport", "golf"),
+                    "ID": item.get("id", ""),
+                    "Sport": item.get("sport", sport),
                 }
             )
     except Exception as e:
-        st.error(f"Players API Request Failed: {e}")
+        st.error(f"Players API Request Failed ({letter}): {e}")
         return []
 
     return players
+
+
+def fetch_all_golf_players_via_letters():
+    letters = list("abcdefghijklmnopqrstuvwxyz")
+    all_players = []
+    seen_ids = set()
+
+    fetch_date = get_fantasy_day()
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    total = len(letters)
+    for idx, letter in enumerate(letters, start=1):
+        status.text(f"Fetching players for '{letter}' ({idx}/{total})...")
+        batch = fetch_golf_players_by_letter(letter, fetch_date)
+        for p in batch:
+            pid = p["ID"]
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                all_players.append(p)
+
+        progress.progress(idx / total)
+
+    progress.empty()
+    status.empty()
+
+    return all_players
 
 
 # --- Main UI ---
@@ -337,7 +351,7 @@ top_left, top_right = st.columns([1, 4])
 with top_left:
     st.write("### Actions")
     fetch_rankings_btn = st.button("Refresh Rankings", type="primary")
-    fetch_all_players_btn = st.button("Load All Players")
+    fetch_all_players_btn = st.button("Build All Players (A–Z)")
 
 with top_right:
     df_rankings = player_store.get_rankings()
@@ -396,27 +410,22 @@ with top_right:
         progress.empty()
         status.empty()
 
-    # --- Fetch all players ---
+    # --- Fetch all players via A–Z search ---
     if fetch_all_players_btn:
-        progress = st.progress(0)
-        status = st.empty()
         try:
-            status.text("Fetching all golf players...")
-            all_players = fetch_all_golf_players()
+            all_players = fetch_all_golf_players_via_letters()
             if all_players:
                 df_all = pd.DataFrame(all_players)
                 df_all = df_all.drop_duplicates(subset=['Player', 'ID'], keep='first')
                 df_all = df_all.sort_values(by=["Player"])
                 player_store.update_all_players(df_all)
-                st.success(f"✅ Loaded {len(df_all)} golf players")
+                st.success(f"✅ Built approximate list of {len(df_all)} golf players")
             else:
                 st.warning(
-                    "No players returned from the players search endpoint."
+                    "No players returned from the search‑by‑letter sweep."
                 )
         except Exception as e:
-            st.error(f"Players Error: {e}")
-        progress.empty()
-        status.empty()
+            st.error(f"All Players Error: {e}")
 
     # --- Display rankings table ---
     df_rankings = player_store.get_rankings()
@@ -458,7 +467,7 @@ with top_right:
                 df_all_filtered["Player"].str.contains(search, case=False, na=False)
             ]
 
-        st.write(f"### All Golf Players ({len(df_all_filtered)})")
+        st.write(f"### All Golf Players (A–Z sweep) – {len(df_all_filtered)}")
         st.dataframe(
             df_all_filtered[["Player", "Team", "ID"]],
             use_container_width=True,
@@ -472,3 +481,5 @@ with top_right:
             file_name="golf_all_players.csv",
             mime="text/csv",
         )
+    else:
+        st.info("Click 'Build All Players (A–Z)' to construct an approximate full list.")
