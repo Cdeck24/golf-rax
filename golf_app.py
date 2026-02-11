@@ -268,15 +268,18 @@ def fetch_golf_rankings(target_date: datetime.date):
     return golf_data, date_str
 
 
-def fetch_golf_players_by_letter(letter: str, target_date: datetime.date):
+def fetch_golf_players_by_letter(letter: str):
+    """
+    Use the simpler search form:
+    /players/sport/golf/search?includeNoOneOption=false&query={letter}
+    """
     session = create_session()
-    date_str = str(target_date)
     sport = "golf"
 
     url = (
         f"{REAL_API_BASE}/players/sport/{sport}/search"
-        f"?day={date_str}&includeNoOneOption=false"
-        f"&query={letter}&searchType=ratingLineup"
+        f"?includeNoOneOption=false"
+        f"&query={letter}"
     )
 
     players = []
@@ -322,15 +325,13 @@ def fetch_all_golf_players_via_letters():
     all_players = []
     seen_ids = set()
 
-    fetch_date = get_fantasy_day()
-
     progress = st.progress(0)
     status = st.empty()
 
     total = len(letters)
     for idx, letter in enumerate(letters, start=1):
         status.text(f"Fetching players for '{letter}' ({idx}/{total})...")
-        batch = fetch_golf_players_by_letter(letter, fetch_date)
+        batch = fetch_golf_players_by_letter(letter)
         for p in batch:
             pid = p["ID"]
             if pid and pid not in seen_ids:
