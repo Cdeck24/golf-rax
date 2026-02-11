@@ -1,22 +1,29 @@
+import os
+import time
+import datetime
+import io
+
 import streamlit as st
 import requests
-import datetime
 import pandas as pd
-import io
-import time
 
 # --- AUTH & CONFIGURATION ---
 REAL_API_BASE = 'https://web.realsports.io'
 REAL_VERSION = '27'
 REAL_REFERER = 'https://realsports.io/'
-DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+DEFAULT_USER_AGENT = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+)
 DEFAULT_SEC_CH_UA = '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"'
 DEVICE_NAME = 'Chrome on Windows'
-DEVICE_UUID = '0e497d76-7bd5-4cf5-b63c-f194d1d4cbcf'
-REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f'
+
+# Load secrets from environment (set these locally or via Streamlit secrets)
+DEVICE_UUID = os.getenv("REAL_DEVICE_UUID")
+REAL_AUTH_TOKEN = os.getenv("REAL_AUTH_TOKEN")
 
 # --- HEADERS & TOKEN GENERATION ---
-def build_headers(token):
+def build_headers(token: str) -> dict:
     return {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
@@ -32,11 +39,11 @@ def build_headers(token):
         'real-device-type': 'desktop_web',
         'real-device-uuid': DEVICE_UUID,
         'real-request-token': token,
-        'real-version': REAL_VERSION
+        'real-version': REAL_VERSION,
     }
 
-def generate_request_token():
-    # (unchanged from your original – kept as-is)
+
+def generate_request_token() -> str:
     salt = 'realwebapp'
     min_length = 16
     alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
@@ -137,8 +144,6 @@ def generate_request_token():
 
     return ''.join(ret)
 
-token = generate_request_token()
-HEADERS = build_headers(token)
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Golf Rax", layout="wide")
@@ -148,6 +153,7 @@ st.markdown(
     "for the 2026 season."
 )
 
+
 # --- GLOBAL STORAGE ---
 @st.cache_resource
 class GlobalPlayerStore:
@@ -156,42 +162,50 @@ class GlobalPlayerStore:
             columns=['Rank', 'Player', 'Team', 'Points', 'Active', 'Details', 'ID']
         )
 
-    def update(self, new_df):
+    def update(self, new_df: pd.DataFrame):
         self.data = new_df
 
-    def get(self):
+    def get(self) -> pd.DataFrame:
         return self.data
+
 
 player_store = GlobalPlayerStore()
 
+
 # --- Helper Functions ---
-def get_fantasy_day():
+def get_fantasy_day() -> datetime.date:
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     us_time = utc_now - datetime.timedelta(hours=5)
     return us_time.date()
 
-def fetch_golf_data(target_date):
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    golf_data = []
 
-    _ = str(target_date)
+def fetch_golf_data(target_date: datetime.date):
+    session = requests.Session()
+    token = generate_request_token()
+    session.headers.update(build_headers(token))
+
+    golf_data = []
+    date_str = str(target_date)
+
     url = (
-        "https://web.realsports.io/"
-        "rankings/sport/golf/entity/player/ranking/primary?season=2026"
+        f"{REAL_API_BASE}/rankings/sport/golf/entity/player/"
+        f"ranking/primary?season=2026"
     )
 
     try:
         r = session.get(url, timeout=10)
         if r.status_code != 200:
             st.error(f"API Error: {r.status_code}")
-            return [], _
+            return [], date_str
+
         data = r.json()
-        raw_list = []
+        if not isinstance(data, (list, dict)):
+            st.error("Unexpected API response format.")
+            return [], date_str
 
         if isinstance(data, list):
             raw_list = data
-        elif isinstance(data, dict):
+        else:
             raw_list = (
                 data.get("players")
                 or data.get("rankings")
@@ -201,7 +215,6 @@ def fetch_golf_data(target_date):
 
         for item in raw_list:
             player = item.get('player', item)
-
             if not isinstance(player, dict):
                 continue
 
@@ -222,7 +235,6 @@ def fetch_golf_data(target_date):
             ):
                 details_text = details[0]["text"]
 
-            # Try a few common fields for rank/points/active:
             rank = (
                 item.get("rank")
                 or item.get("position")
@@ -255,8 +267,10 @@ def fetch_golf_data(target_date):
             )
     except Exception as e:
         st.error(f"API Request Failed: {e}")
+        return [], date_str
 
-    return golf_data, _
+    return golf_data, date_str
+
 
 # --- Main UI ---
 top_left, top_right = st.columns([1, 4])
@@ -284,7 +298,6 @@ with top_right:
 
             if data:
                 df_new = pd.DataFrame(data)
-
                 df_new = df_new.drop_duplicates(subset=['Player'], keep='first')
 
                 if "Rank" in df_new.columns:
