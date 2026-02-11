@@ -1,9 +1,7 @@
 import streamlit as st
 import requests
 import datetime
-import string
 import pandas as pd
-import concurrent.futures
 import io
 import time
 
@@ -189,22 +187,6 @@ def get_fantasy_day():
     us_time = utc_now - datetime.timedelta(hours=5)
     return us_time.date()
 
-def fetch_letter(session, sport, date_str, letter):
-    # Loop Logic: Iterates through search queries to find all players
-    url = (
-        f"https://web.realsports.io/players/sport/golf/search"
-        f"?includeNoOneOption=false"
-        f"&query={letter}"
-        f"&day={date_str}" 
-    )
-    try:
-        r = session.get(url, timeout=5)
-        if r.status_code == 200:
-            return r.json().get("players", [])
-    except:
-        pass
-    return []
-
 def fetch_golf_data(target_date):
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -212,33 +194,34 @@ def fetch_golf_data(target_date):
     
     active_date_str = str(target_date)
     
-    # Alphabet + Common Accents
-    letters = list(string.ascii_uppercase) + ['Š', 'Ć', 'Č', 'Ž', 'Đ', 'Ö', 'Ä', 'Ü', 'Å', 'Ø']
+    # Use the single URL endpoint to fetch all players at once
+    url = (
+        f"https://web.realsports.io/players/sport/golf/search"
+        f"?includeNoOneOption=false"
+        f"&day={active_date_str}" 
+    )
     
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_req = {executor.submit(fetch_letter, session, "golf", active_date_str, letter): letter for letter in letters}
-        
-        for future in concurrent.futures.as_completed(future_to_req):
-            try:
-                players = future.result()
-                if not players: continue
-
-                for player in players:
-                    full_name = f"{player['firstName']} {player['lastName']}"
-                    
-                    details_text = ""
-                    details = player.get("details")
-                    if details and isinstance(details, list) and len(details) > 0 and "text" in details[0]:
-                        details_text = details[0]["text"]
-                    
-                    golf_data.append({
-                        "Player Name": full_name,
-                        "Team": player.get('team', {}).get('abbreviation', 'N/A'), # Sometimes golf has country/team
-                        "Details": details_text,
-                        "ID": player.get('id', '')
-                    })
-            except:
-                continue
+    try:
+        r = session.get(url, timeout=10)
+        if r.status_code == 200:
+            players = r.json().get("players", [])
+            for player in players:
+                full_name = f"{player['firstName']} {player['lastName']}"
+                
+                details_text = ""
+                details = player.get("details")
+                if details and isinstance(details, list) and len(details) > 0 and "text" in details[0]:
+                    details_text = details[0]["text"]
+                
+                golf_data.append({
+                    "Player Name": full_name,
+                    "Team": player.get('team', {}).get('abbreviation', 'N/A'),
+                    "Details": details_text,
+                    "ID": player.get('id', '')
+                })
+    except Exception as e:
+        st.error(f"API Request Failed: {e}")
+        pass
             
     return golf_data, active_date_str
 
@@ -255,7 +238,7 @@ with col2:
         progress = st.progress(0)
         status = st.empty()
         try:
-            status.text("Fetching Golf data (A-Z)...")
+            status.text("Fetching Golf data...")
             fetch_date = get_fantasy_day()
             data, date_str = fetch_golf_data(fetch_date)
             
