@@ -18,9 +18,10 @@ DEFAULT_USER_AGENT = (
 DEFAULT_SEC_CH_UA = '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"'
 DEVICE_NAME = 'Chrome on Windows'
 
-# Your original values (only safe if kept private and local)
+# Your original values (local/private use only)
 DEVICE_UUID = '0e497d76-7bd5-4cf5-b63c-f194d1d4cbcf'
 REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f'
+
 
 # --- HEADERS & TOKEN GENERATION ---
 def build_headers(token: str) -> dict:
@@ -199,10 +200,13 @@ def fetch_golf_data(target_date: datetime.date):
             return [], date_str
 
         data = r.json()
+        st.write("DEBUG raw response:", data)  # TEMP: inspect structure
+
         if not isinstance(data, (list, dict)):
             st.error("Unexpected API response format.")
             return [], date_str
 
+        # More flexible extraction of the player list
         if isinstance(data, list):
             raw_list = data
         else:
@@ -210,8 +214,29 @@ def fetch_golf_data(target_date: datetime.date):
                 data.get("players")
                 or data.get("rankings")
                 or data.get("data")
-                or []
             )
+            if raw_list is None:
+                # Try common nested containers like {"ranking": {"players": [...]}}
+                for key in ("ranking", "result", "payload"):
+                    if key in data and isinstance(data[key], dict):
+                        candidate = (
+                            data[key].get("players")
+                            or data[key].get("rankings")
+                            or data[key].get("data")
+                        )
+                        if isinstance(candidate, list):
+                            raw_list = candidate
+                            break
+            if raw_list is None:
+                # Final fallback: first list value anywhere
+                for v in data.values():
+                    if isinstance(v, list):
+                        raw_list = v
+                        break
+            if raw_list is None:
+                raw_list = []
+
+        st.write("DEBUG first item:", raw_list[0] if raw_list else "EMPTY")
 
         for item in raw_list:
             player = item.get('player', item)
