@@ -194,19 +194,35 @@ def fetch_golf_data(target_date):
     
     active_date_str = str(target_date)
     
-    # Use the single URL endpoint to fetch all players at once
-    url = (
-        f"https://web.realsports.io/players/sport/golf/search"
-        f"?includeNoOneOption=false"
-        f"&day={active_date_str}" 
-    )
+    # Updated to Ranking URL as requested
+    url = "https://web.realsports.io/rankings/sport/golf/entity/player/ranking/primary?season=2026"
     
     try:
         r = session.get(url, timeout=10)
         if r.status_code == 200:
-            players = r.json().get("players", [])
-            for player in players:
-                full_name = f"{player['firstName']} {player['lastName']}"
+            data = r.json()
+            raw_list = []
+            
+            # Robust Parsing: Handle List or Dictionary response
+            if isinstance(data, list):
+                raw_list = data
+            elif isinstance(data, dict):
+                # Try common keys found in ranking APIs
+                raw_list = data.get("players") or data.get("rankings") or data.get("data") or []
+            
+            for item in raw_list:
+                # Ranking endpoints often nest the actual player object inside a 'player' key
+                # Search endpoints usually have it at the top level
+                # This line handles both cases safely
+                player = item.get('player', item)
+                
+                # Check for basic required fields
+                if not isinstance(player, dict):
+                    continue
+
+                full_name = f"{player.get('firstName', '')} {player.get('lastName', '')}".strip()
+                if not full_name:
+                    full_name = player.get('displayName') or "Unknown"
                 
                 details_text = ""
                 details = player.get("details")
