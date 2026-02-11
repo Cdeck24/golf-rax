@@ -200,48 +200,19 @@ def fetch_golf_data(target_date: datetime.date):
             return [], date_str
 
         data = r.json()
-        st.write("DEBUG raw response:", data)  # TEMP: inspect structure
-
-        if not isinstance(data, (list, dict)):
+        if not isinstance(data, dict):
             st.error("Unexpected API response format.")
             return [], date_str
 
-        # More flexible extraction of the player list
-        if isinstance(data, list):
-            raw_list = data
-        else:
-            raw_list = (
-                data.get("players")
-                or data.get("rankings")
-                or data.get("data")
-            )
-            if raw_list is None:
-                # Try common nested containers like {"ranking": {"players": [...]}}
-                for key in ("ranking", "result", "payload"):
-                    if key in data and isinstance(data[key], dict):
-                        candidate = (
-                            data[key].get("players")
-                            or data[key].get("rankings")
-                            or data[key].get("data")
-                        )
-                        if isinstance(candidate, list):
-                            raw_list = candidate
-                            break
-            if raw_list is None:
-                # Final fallback: first list value anywhere
-                for v in data.values():
-                    if isinstance(v, list):
-                        raw_list = v
-                        break
-            if raw_list is None:
-                raw_list = []
+        # Your sample shows the list is under "items"
+        raw_list = data.get("items", [])
+        if not isinstance(raw_list, list):
+            st.error("Expected 'items' to be a list in API response.")
+            return [], date_str
 
-        st.write("DEBUG first item:", raw_list[0] if raw_list else "EMPTY")
-
-        for item in raw_list:
-            player = item.get('player', item)
-            if not isinstance(player, dict):
-                continue
+        for idx, item in enumerate(raw_list, start=1):
+            # item itself is the player record
+            player = item
 
             full_name = (
                 f"{player.get('firstName', '')} {player.get('lastName', '')}"
@@ -249,41 +220,35 @@ def fetch_golf_data(target_date: datetime.date):
             if not full_name:
                 full_name = player.get('displayName') or "Unknown"
 
+            # No 'details' field in your sample; keep placeholder logic
             details_text = ""
-            details = player.get("details")
-            if (
-                details
-                and isinstance(details, list)
-                and len(details) > 0
-                and isinstance(details[0], dict)
-                and "text" in details[0]
-            ):
-                details_text = details[0]["text"]
 
             rank = (
-                item.get("rank")
+                item.get("value")      # ranking position from your JSON
+                or item.get("rank")
                 or item.get("position")
-                or player.get("rank")
-                or player.get("position")
+                or idx                 # fallback to list index if needed
             )
             points = (
-                item.get("points")
+                item.get("rating")     # rating string from your JSON
+                or item.get("points")
                 or item.get("score")
                 or item.get("value")
-                or player.get("points")
             )
 
-            active = (
-                player.get("active")
-                if isinstance(player.get("active"), bool)
-                else None
-            )
+            # No explicit "active" field; treat as None
+            active = None
+
+            team_abbrev = player.get('team', {}).get('abbreviation')
+            if not team_abbrev and 'teamId' in player:
+                # We only have teamId in this endpoint; show that instead
+                team_abbrev = f"Team {player.get('teamId')}"
 
             golf_data.append(
                 {
                     "Rank": rank,
                     "Player": full_name,
-                    "Team": player.get('team', {}).get('abbreviation', 'N/A'),
+                    "Team": team_abbrev or 'N/A',
                     "Points": points,
                     "Active": active,
                     "Details": details_text,
