@@ -13,7 +13,7 @@
         body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-900 min-h-screen">
+<body class="bg-gray-900 text-gray-100 min-h-screen">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -135,7 +135,8 @@
                     try {
                         for (let y = 2014; y <= 2025; y++) {
                             try {
-                                const jRes = await fetch(`./golf-otd/${y}-golf-data.json`);
+                                // CHANGED FOR VERCEL: Using absolute path starting with /
+                                const jRes = await fetch(`/golf-otd/${y}-golf-data.json`);
                                 if (jRes.ok) {
                                     const parsed = normalizeEvents(await jRes.json(), y);
                                     allEvents = allEvents.concat(parsed.events);
@@ -219,7 +220,7 @@
 
             return (
                 <div className="pb-12">
-                    <header className="bg-green-800 text-white p-6 shadow-md">
+                    <header className="bg-green-800 text-white p-6 shadow-md border-b border-green-900">
                         <div className="max-w-4xl mx-auto flex justify-between items-center">
                             <h1 className="text-2xl font-bold flex items-center gap-2">
                                 <CalendarIcon /> Golf Yearly Rax Tracker
@@ -234,18 +235,18 @@
                     
                     <main className="max-w-4xl mx-auto mt-8 px-4">
                         {isLoading && !dataLoaded ? (
-                            <div className="text-center p-12 text-gray-500 animate-pulse">
+                            <div className="text-center p-12 text-gray-400 animate-pulse">
                                 <SearchIcon size={48} className="mx-auto mb-4 opacity-50 animate-spin" />
-                                <p className="text-lg">Analyzing local repository data...</p>
+                                <p className="text-lg">Analyzing repository data...</p>
                             </div>
                         ) : !dataLoaded ? (
-                            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-200 text-center">
-                                <div className="w-16 h-16 bg-green-100 text-green-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <div className="bg-gray-800 p-10 rounded-2xl shadow-sm border border-gray-700 text-center">
+                                <div className="w-16 h-16 bg-gray-700 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4">
                                     <UploadIcon size={32} />
                                 </div>
-                                <h2 className="text-2xl font-bold mb-2 text-gray-800">Load Rax Data</h2>
-                                <p className="text-gray-600 mb-8 max-w-md mx-auto">
-                                    Automatic data fetching failed (likely due to local file security). Please manually select the contents of your <b>golf-otd</b> folder to begin.
+                                <h2 className="text-2xl font-bold mb-2 text-white">Load Rax Data</h2>
+                                <p className="text-gray-400 mb-8 max-w-md mx-auto">
+                                    Automatic data fetching failed. Make sure your JSON files are located in a <b>public/golf-otd/</b> folder. You can also manually select the files below.
                                 </p>
                                 
                                 <label className="cursor-pointer bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-xl font-medium inline-flex items-center gap-3 shadow-sm transition-all hover:scale-105">
@@ -257,15 +258,15 @@
                         ) : (
                             <div className="animate-fade-in">
                                 {/* Dashboard Controls */}
-                                <div className="flex justify-end mb-8 bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
-                                    <label className="cursor-pointer text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium inline-flex items-center gap-2 transition-colors">
-                                        <UploadIcon size={16} /> Load Local Data
+                                <div className="flex justify-end mb-8 bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-700">
+                                    <label className="cursor-pointer text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 px-4 py-2 rounded-lg font-medium inline-flex items-center gap-2 transition-colors">
+                                        <UploadIcon size={16} /> Load Additional Data
                                         <input type="file" multiple accept=".json" className="hidden" onChange={handleFiles} />
                                     </label>
                                 </div>
 
                                 {/* Grand Total Header */}
-                                <div className="mb-8 p-8 bg-gradient-to-br from-green-600 to-green-800 text-white rounded-2xl shadow-lg flex justify-between items-center relative overflow-hidden">
+                                <div className="mb-8 p-8 bg-gradient-to-br from-green-700 to-green-900 text-white rounded-2xl shadow-lg flex justify-between items-center relative overflow-hidden border border-green-800">
                                     <div className="relative z-10">
                                         <h2 className="text-lg font-medium opacity-90 tracking-wide uppercase">All-Time Total Earnings</h2>
                                         <div className="flex items-baseline gap-2 mt-1">
@@ -280,15 +281,15 @@
                                 {/* View Mode Toggles */}
                                 {events.length > 0 && (
                                     <div className="flex justify-center mb-6">
-                                        <div className="flex bg-gray-200 p-1 rounded-xl inline-flex shadow-inner">
+                                        <div className="flex bg-gray-800 border border-gray-700 p-1 rounded-xl inline-flex shadow-inner">
                                             <button 
                                                 onClick={() => setViewMode('investments')}
-                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'investments' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'investments' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
                                                 🏆 Best Investments
                                             </button>
                                             <button 
                                                 onClick={() => setViewMode('years')}
-                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
                                                 📅 Year-by-Year Breakdown
                                             </button>
                                         </div>
@@ -297,37 +298,37 @@
 
                                 {/* Results Rendering */}
                                 {sortedYears.length === 0 ? (
-                                    <div className="text-center p-12 bg-white rounded-2xl border border-gray-200 text-gray-500">
+                                    <div className="text-center p-12 bg-gray-800 rounded-2xl border border-gray-700 text-gray-400">
                                         <CalendarXIcon size={56} className="mx-auto mb-4 opacity-20" />
-                                        <h3 className="text-xl font-bold text-gray-700">No events found</h3>
+                                        <h3 className="text-xl font-bold text-gray-300">No events found</h3>
                                         <p className="mt-2">There are no recorded earnings loaded yet.</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
                                         {viewMode === 'investments' && (
-                                            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
-                                                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                                                    <h3 className="text-xl font-black text-gray-800">Top Earners Across All Years</h3>
+                                            <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
+                                                <div className="bg-gray-800/80 px-6 py-4 border-b border-gray-700 flex justify-between items-center">
+                                                    <h3 className="text-xl font-black text-gray-100">Top Earners Across All Years</h3>
                                                 </div>
-                                                <ul className="divide-y divide-gray-100">
+                                                <ul className="divide-y divide-gray-700/50">
                                                     {sortedTopGolfers.map((gId, index) => {
                                                         const data = golferAggregates[gId];
                                                         const activeYears = Object.keys(data.years).sort((a,b) => b-a);
                                                         return (
-                                                            <li key={gId} className="px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center hover:bg-gray-50 transition-colors gap-3">
+                                                            <li key={gId} className="px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center hover:bg-gray-700/30 transition-colors gap-3">
                                                                 <div className="flex items-start gap-3">
-                                                                    <span className="text-gray-400 font-mono text-sm w-4 mt-1">{index + 1}.</span>
+                                                                    <span className="text-gray-500 font-mono text-sm w-4 mt-1">{index + 1}.</span>
                                                                     <div>
-                                                                        <div className="font-bold text-gray-800 text-lg">
+                                                                        <div className="font-bold text-gray-100 text-lg">
                                                                             {getDisplayName(gId)}
                                                                         </div>
-                                                                        <div className="text-xs text-gray-500 mt-1 font-medium bg-gray-200 inline-block px-2 py-0.5 rounded">
+                                                                        <div className="text-xs text-gray-400 mt-1 font-medium bg-gray-700 inline-block px-2 py-0.5 rounded border border-gray-600">
                                                                             {activeYears.length} {activeYears.length === 1 ? 'Year' : 'Years'}: {activeYears.join(', ')}
                                                                         </div>
                                                                     </div>
                                                                 </div>
                                                                 <div className="sm:text-right ml-7 sm:ml-0">
-                                                                    <div className="text-green-700 font-black text-xl">
+                                                                    <div className="text-green-400 font-black text-xl">
                                                                         {data.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} <span className="text-sm font-semibold opacity-75">Rax</span>
                                                                     </div>
                                                                 </div>
@@ -344,28 +345,28 @@
                                             const maxRax = Math.max(...Object.values(data.golfers));
                                             
                                             return (
-                                                <div key={year} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
-                                                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                                                        <h3 className="text-xl font-black text-gray-800">{year}</h3>
-                                                        <span className="font-bold text-green-700 bg-green-100 px-3 py-1 rounded-full text-sm">
+                                                <div key={year} className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
+                                                    <div className="bg-gray-800/80 px-6 py-4 border-b border-gray-700 flex justify-between items-center">
+                                                        <h3 className="text-xl font-black text-gray-100">{year}</h3>
+                                                        <span className="font-bold text-green-400 bg-green-900/40 px-3 py-1 rounded-full text-sm border border-green-800/50">
                                                             {data.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} Rax
                                                         </span>
                                                     </div>
-                                                    <ul className="divide-y divide-gray-100">
+                                                    <ul className="divide-y divide-gray-700/50">
                                                         {sortedGolfers.map((gId, index) => (
-                                                            <li key={gId} className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                                            <li key={gId} className="px-6 py-4 flex justify-between items-center hover:bg-gray-700/30 transition-colors">
                                                                 <div className="flex items-center gap-3">
-                                                                    <span className="text-gray-400 font-mono text-sm w-4">{index + 1}.</span>
-                                                                    <span className="font-medium text-gray-800 text-lg">
+                                                                    <span className="text-gray-500 font-mono text-sm w-4">{index + 1}.</span>
+                                                                    <span className="font-medium text-gray-100 text-lg">
                                                                         {getDisplayName(gId)}
                                                                     </span>
                                                                     {data.golfers[gId] === maxRax && (
-                                                                        <span className="text-[10px] uppercase tracking-wider bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full font-bold shadow-sm">
+                                                                        <span className="text-[10px] uppercase tracking-wider bg-yellow-900/50 text-yellow-400 px-2.5 py-1 rounded-full font-bold shadow-sm border border-yellow-700/50">
                                                                             Top Earner
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                                <span className="text-gray-600 font-semibold text-lg">
+                                                                <span className="text-gray-300 font-semibold text-lg">
                                                                     {data.golfers[gId].toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
                                                                 </span>
                                                             </li>
