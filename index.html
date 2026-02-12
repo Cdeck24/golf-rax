@@ -34,6 +34,49 @@
                 if(typeof str !== 'string') return false;
                 return !!str.match(/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/);
             };
+
+            // Custom Heuristic: Match specific format with first_name, last_name, player_id, and nested event earnings
+            if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
+                let isNewFormat = false;
+                for (let key in jsonData) {
+                    const playerObj = jsonData[key];
+                    if (playerObj && typeof playerObj === 'object' && ('first_name' in playerObj || 'last_name' in playerObj || 'total_earnings' in playerObj)) {
+                        isNewFormat = true;
+                        break;
+                    }
+                }
+                
+                if (isNewFormat) {
+                    for (let dictKey in jsonData) {
+                        const playerObj = jsonData[dictKey];
+                        const firstName = playerObj.first_name || "";
+                        const lastName = playerObj.last_name || "";
+                        const fullName = `${firstName} ${lastName}`.trim() || null;
+                        const finalPlayerId = playerObj.player_id ? String(playerObj.player_id) : dictKey;
+                        
+                        // Iterate through the keys looking for the nested event objects
+                        for (let eventKey in playerObj) {
+                            // Skip the metadata properties
+                            if (['first_name', 'last_name', 'player_id', 'total_earnings'].includes(eventKey)) continue;
+                            
+                            const eventObj = playerObj[eventKey];
+                            if (eventObj && typeof eventObj === 'object' && eventObj.date) {
+                                // Default to 0 if earnings isn't found, mapping earnings -> rax
+                                const raxVal = eventObj.earnings !== undefined ? eventObj.earnings : 0;
+                                
+                                events.push({
+                                    date: String(eventObj.date),
+                                    year: sourceYear || parseInt(String(eventObj.date).substring(0, 4)) || new Date().getFullYear(),
+                                    golferId: finalPlayerId,
+                                    golferName: fullName,
+                                    rax: parseFloat(raxVal)
+                                });
+                            }
+                        }
+                    }
+                    if (events.length > 0) return events;
+                }
+            }
             
             // Heuristic 1: Object mapping ID/Name -> Date -> Rax
             if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
