@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Golf OTD Rax Tracker</title>
+    <title>Golf Yearly Rax Tracker</title>
     <!-- React and Tailwind -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -35,7 +35,7 @@
                 return !!str.match(/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/);
             };
             
-            // Heuristic 1: Object mapping ID -> Date -> Rax { "golfer_id": { "YYYY-MM-DD": rax } }
+            // Heuristic 1: Object mapping ID/Name -> Date -> Rax
             if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
                 let isNestedMap = true;
                 let hasDates = false;
@@ -57,6 +57,7 @@
                                     date: dateStr,
                                     year: sourceYear || parseInt(dateStr.substring(0, 4)) || new Date().getFullYear(),
                                     golferId: golferId,
+                                    golferName: /^\d+$/.test(golferId) ? null : golferId, // Extract name if key isn't numeric
                                     rax: parseFloat(raxVal)
                                 });
                             }
@@ -66,7 +67,7 @@
                 }
             }
             
-            // Heuristic 2: Object mapping Date -> ID -> Rax { "YYYY-MM-DD": { "golfer_id": rax } }
+            // Heuristic 2: Object mapping Date -> ID/Name -> Rax
             if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
                 let isDateMap = true;
                 let validDateFound = false;
@@ -83,6 +84,7 @@
                                     date: dateStr,
                                     year: sourceYear || parseInt(dateStr.substring(0, 4)) || new Date().getFullYear(),
                                     golferId: golferId,
+                                    golferName: /^\d+$/.test(golferId) ? null : golferId,
                                     rax: parseFloat(raxVal)
                                 });
                             }
@@ -97,12 +99,12 @@
             const flattenToArr = (obj) => {
                 if (Array.isArray(obj)) obj.forEach(flattenToArr);
                 else if (obj && typeof obj === 'object') {
-                    let hasDate = false, hasRax = false;
+                    let hasDateOrYear = false, hasRax = false;
                     for(let key in obj) {
-                       if(key.toLowerCase().match(/date|time/)) hasDate = true;
+                       if(key.toLowerCase().match(/date|time|year/)) hasDateOrYear = true;
                        if(key.toLowerCase().match(/rax|earn|rating|value|score/)) hasRax = true;
                     }
-                    if(hasDate && hasRax) flatArr.push(obj);
+                    if(hasDateOrYear && hasRax) flatArr.push(obj);
                     else for(let key in obj) flattenToArr(obj[key]);
                 }
             }
@@ -112,15 +114,28 @@
                 flatArr.forEach(item => {
                     const keys = Object.keys(item);
                     const dateKey = keys.find(k => k.toLowerCase().match(/date|time/));
+                    const yearKey = keys.find(k => k.toLowerCase().match(/year/));
                     const raxKey = keys.find(k => k.toLowerCase().match(/rax|earn|rating|value|score/));
-                    const idKey = keys.find(k => k.toLowerCase().match(/id|player|golfer/));
                     
-                    if (dateKey && raxKey) {
-                        const dateStr = item[dateKey];
+                    // Search for name or ID keys
+                    const nameKey = keys.find(k => k.toLowerCase().match(/name|player|golfer/) && !k.toLowerCase().match(/id/));
+                    const idKey = keys.find(k => k.toLowerCase().match(/id/));
+                    
+                    if ((dateKey || yearKey || sourceYear) && raxKey) {
+                        const dateStr = dateKey ? String(item[dateKey]) : null;
+                        const itemYear = yearKey ? parseInt(item[yearKey]) : (dateStr ? parseInt(String(dateStr).substring(0,4)) : sourceYear);
+                        
+                        let gId = idKey ? String(item[idKey]) : 'Unknown';
+                        let gName = nameKey ? String(item[nameKey]) : null;
+                        
+                        // Fallback to name if ID is unknown
+                        if (gName && gId === 'Unknown') gId = gName;
+                        
                         events.push({
-                            date: String(dateStr),
-                            year: sourceYear || parseInt(String(dateStr).substring(0,4)) || new Date().getFullYear(),
-                            golferId: idKey ? String(item[idKey]) : 'Unknown',
+                            date: dateStr || `${itemYear}-01-01`,
+                            year: itemYear || sourceYear || new Date().getFullYear(),
+                            golferId: gId,
+                            golferName: gName,
                             rax: parseFloat(item[raxKey]) || 0
                         });
                     }
@@ -138,6 +153,7 @@
                             date: key,
                             year: sourceYear || parseInt(key.substring(0, 4)),
                             golferId: parentKey,
+                            golferName: /^\d+$/.test(parentKey) ? null : parentKey,
                             rax: val
                         });
                     } else if (typeof val === 'object') {
@@ -150,28 +166,11 @@
             return events;
         };
 
-        const getMonthDay = (dateStr) => {
-            if (!dateStr || typeof dateStr !== 'string') return null;
-            let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-            if (m) return { m: parseInt(m[2]), d: parseInt(m[3]) };
-            
-            m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-            if (m) return { m: parseInt(m[1]), d: parseInt(m[2]) };
-            
-            const d = new Date(dateStr);
-            if (!isNaN(d)) return { m: d.getMonth() + 1, d: d.getDate() };
-            return null;
-        };
-
         // --- Main App Component ---
         const App = () => {
             const [events, setEvents] = useState([]);
             const [dataLoaded, setDataLoaded] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
-
-            // Date Selection State
-            const [month, setMonth] = useState(new Date().getMonth() + 1);
-            const [day, setDay] = useState(new Date().getDate());
             const [viewMode, setViewMode] = useState('investments');
 
             useEffect(() => {
@@ -226,50 +225,56 @@
                 setIsLoading(false);
             };
 
-            const otdEvents = useMemo(() => {
-                return events.filter(e => {
-                    const md = getMonthDay(e.date);
-                    if (md) return md.m === month && md.d === day;
-                    return false;
+            // Extract Name Mapping intelligently across all events
+            const golferNameMap = useMemo(() => {
+                const map = {};
+                events.forEach(e => {
+                    if (e.golferName && !/^\d+$/.test(e.golferName)) {
+                        map[e.golferId] = e.golferName;
+                    }
                 });
-            }, [events, month, day]);
+                return map;
+            }, [events]);
 
+            const getDisplayName = (gId) => {
+                if (golferNameMap[gId]) return golferNameMap[gId];
+                return /^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId;
+            };
+
+            // Aggregate data by year
             const yearGroups = useMemo(() => {
                 const groups = {};
-                otdEvents.forEach(e => {
+                events.forEach(e => {
                     if (!groups[e.year]) groups[e.year] = { total: 0, golfers: {} };
                     groups[e.year].total += e.rax;
                     if (!groups[e.year].golfers[e.golferId]) groups[e.year].golfers[e.golferId] = 0;
                     groups[e.year].golfers[e.golferId] += e.rax;
                 });
                 return groups;
-            }, [otdEvents]);
+            }, [events]);
             
             const sortedYears = Object.keys(yearGroups).sort((a,b) => b - a);
-            const grandTotal = otdEvents.reduce((sum, e) => sum + e.rax, 0);
+            const grandTotal = events.reduce((sum, e) => sum + e.rax, 0);
 
+            // Aggregate data globally for "Best Investments"
             const golferAggregates = useMemo(() => {
                 const groups = {};
-                otdEvents.forEach(e => {
+                events.forEach(e => {
                     if (!groups[e.golferId]) groups[e.golferId] = { total: 0, years: {} };
                     groups[e.golferId].total += e.rax;
                     groups[e.golferId].years[e.year] = (groups[e.golferId].years[e.year] || 0) + e.rax;
                 });
                 return groups;
-            }, [otdEvents]);
+            }, [events]);
             
             const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].total - golferAggregates[a].total);
-
-            const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-            const daysInMonth = new Date(2024, month, 0).getDate(); // Leap year base for max days
-            const dateTitle = new Date(2024, month - 1, day).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 
             return (
                 <div className="pb-12">
                     <header className="bg-green-800 text-white p-6 shadow-md">
                         <div className="max-w-4xl mx-auto flex justify-between items-center">
                             <h1 className="text-2xl font-bold flex items-center gap-2">
-                                <CalendarIcon /> Golf OTD Tracker
+                                <CalendarIcon /> Golf Yearly Rax Tracker
                             </h1>
                             {dataLoaded && (
                                 <div className="text-sm bg-green-900 px-3 py-1 rounded-full opacity-80 border border-green-700">
@@ -304,49 +309,28 @@
                         ) : (
                             <div className="animate-fade-in">
                                 {/* Dashboard Controls */}
-                                <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-8 bg-white p-5 rounded-2xl shadow-sm border border-gray-200">
-                                    <div className="flex gap-4 items-center flex-1">
-                                        <div className="flex-1 max-w-[200px]">
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Month</label>
-                                            <select value={month} onChange={e => { setMonth(parseInt(e.target.value)); setDay(1); }} className="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border focus:ring-green-500 focus:border-green-500">
-                                                {monthsList.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="flex-1 max-w-[120px]">
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Day</label>
-                                            <select value={day} onChange={e => setDay(parseInt(e.target.value))} className="w-full border-gray-300 rounded-lg p-2.5 bg-gray-50 border focus:ring-green-500 focus:border-green-500">
-                                                {Array.from({length: daysInMonth}, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
-                                            </select>
-                                        </div>
-                                        <button 
-                                            onClick={() => { setMonth(new Date().getMonth()+1); setDay(new Date().getDate()); }} 
-                                            className="mt-5 px-4 py-2.5 bg-green-100 text-green-800 rounded-lg hover:bg-green-200 font-medium transition-colors">
-                                            Today
-                                        </button>
-                                    </div>
-                                    <div className="md:border-l md:border-gray-200 md:pl-6 pt-4 md:pt-0 border-t border-gray-100">
-                                        <label className="cursor-pointer text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium inline-flex items-center gap-2 transition-colors">
-                                            <UploadIcon size={16} /> Add More Files
-                                            <input type="file" multiple accept=".json" className="hidden" onChange={handleFiles} />
-                                        </label>
-                                    </div>
+                                <div className="flex justify-end mb-8 bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+                                    <label className="cursor-pointer text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium inline-flex items-center gap-2 transition-colors">
+                                        <UploadIcon size={16} /> Load Local Data
+                                        <input type="file" multiple accept=".json" className="hidden" onChange={handleFiles} />
+                                    </label>
                                 </div>
 
                                 {/* Grand Total Header */}
                                 <div className="mb-8 p-8 bg-gradient-to-br from-green-600 to-green-800 text-white rounded-2xl shadow-lg flex justify-between items-center relative overflow-hidden">
                                     <div className="relative z-10">
-                                        <h2 className="text-lg font-medium opacity-90 tracking-wide uppercase">All-Time OTD Earnings</h2>
+                                        <h2 className="text-lg font-medium opacity-90 tracking-wide uppercase">All-Time Total Earnings</h2>
                                         <div className="flex items-baseline gap-2 mt-1">
                                             <p className="text-5xl font-black">{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}</p>
                                             <span className="text-xl opacity-80 font-medium">Rax</span>
                                         </div>
-                                        <p className="opacity-75 mt-2 text-sm">Historically achieved on {dateTitle}</p>
+                                        <p className="opacity-75 mt-2 text-sm">Combined total across all recorded years</p>
                                     </div>
                                     <TrophyIcon size={100} className="opacity-10 absolute right-4 top-1/2 transform -translate-y-1/2 rotate-12" />
                                 </div>
 
                                 {/* View Mode Toggles */}
-                                {otdEvents.length > 0 && (
+                                {events.length > 0 && (
                                     <div className="flex justify-center mb-6">
                                         <div className="flex bg-gray-200 p-1 rounded-xl inline-flex shadow-inner">
                                             <button 
@@ -357,18 +341,18 @@
                                             <button 
                                                 onClick={() => setViewMode('years')}
                                                 className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                                                📅 Year-by-Year
+                                                📅 Year-by-Year Breakdown
                                             </button>
                                         </div>
                                     </div>
                                 )}
 
-                                {/* Year Breakdown */}
+                                {/* Results Rendering */}
                                 {sortedYears.length === 0 ? (
                                     <div className="text-center p-12 bg-white rounded-2xl border border-gray-200 text-gray-500">
                                         <CalendarXIcon size={56} className="mx-auto mb-4 opacity-20" />
                                         <h3 className="text-xl font-bold text-gray-700">No events found</h3>
-                                        <p className="mt-2">There are no recorded earnings on {dateTitle}.</p>
+                                        <p className="mt-2">There are no recorded earnings loaded yet.</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
@@ -387,7 +371,7 @@
                                                                     <span className="text-gray-400 font-mono text-sm w-4 mt-1">{index + 1}.</span>
                                                                     <div>
                                                                         <div className="font-bold text-gray-800 text-lg">
-                                                                            {/^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId}
+                                                                            {getDisplayName(gId)}
                                                                         </div>
                                                                         <div className="text-xs text-gray-500 mt-1 font-medium bg-gray-200 inline-block px-2 py-0.5 rounded">
                                                                             {activeYears.length} {activeYears.length === 1 ? 'Year' : 'Years'}: {activeYears.join(', ')}
@@ -425,7 +409,7 @@
                                                                 <div className="flex items-center gap-3">
                                                                     <span className="text-gray-400 font-mono text-sm w-4">{index + 1}.</span>
                                                                     <span className="font-medium text-gray-800 text-lg">
-                                                                        {/^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId}
+                                                                        {getDisplayName(gId)}
                                                                     </span>
                                                                     {data.golfers[gId] === maxRax && (
                                                                         <span className="text-[10px] uppercase tracking-wider bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full font-bold shadow-sm">
