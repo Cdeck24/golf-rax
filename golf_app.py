@@ -1,361 +1,244 @@
-import time
-import datetime
-
 import streamlit as st
-import requests
-import pandas as pd
+import streamlit.components.v1 as components
+import json
+import os
 
-# --- AUTH & CONFIGURATION ---
-REAL_API_BASE = 'https://web.realsports.io'
-REAL_VERSION = '27'
-REAL_REFERER = 'https://realsports.io/'
-DEFAULT_USER_AGENT = (
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-    '(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-)
-DEFAULT_SEC_CH_UA = '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"'
-DEVICE_NAME = 'Chrome on Windows'
-
-# Your original values (local/private use only)
-DEVICE_UUID = '0e497d76-7bd5-4cf5-b63c-f194d1d4cbcf'
-REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f'
-
-
-# --- HEADERS & TOKEN GENERATION ---
-def build_headers(token: str) -> dict:
-    return {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'DNT': '1',
-        'Origin': 'https://realsports.io',
-        'Referer': REAL_REFERER,
-        'User-Agent': DEFAULT_USER_AGENT,
-        'sec-ch-ua': DEFAULT_SEC_CH_UA,
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'real-auth-info': REAL_AUTH_TOKEN,
-        'real-device-name': DEVICE_NAME,
-        'real-device-type': 'desktop_web',
-        'real-device-uuid': DEVICE_UUID,
-        'real-request-token': token,
-        'real-version': REAL_VERSION,
-    }
-
-
-def generate_request_token() -> str:
-    salt = 'realwebapp'
-    min_length = 16
-    alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890'
-    seps = 'cfhistuCFHISTU'
-
-    def shuffle(alphabet_chars, salt_chars):
-        if len(salt_chars) == 0:
-            return alphabet_chars
-        transformed = list(alphabet_chars)
-        v = 0
-        p = 0
-        for i in range(len(transformed) - 1, 0, -1):
-            v %= len(salt_chars)
-            integer = ord(salt_chars[v])
-            p += integer
-            j = (integer + v + p) % i
-            transformed[i], transformed[j] = transformed[j], transformed[i]
-            v += 1
-        return transformed
-
-    def to_alphabet(num, alphabet_chars):
-        result = []
-        alphabet_len = len(alphabet_chars)
-        while True:
-            result.insert(0, alphabet_chars[num % alphabet_len])
-            num = num // alphabet_len
-            if num == 0:
-                break
-        return result
-
-    salt_chars = list(salt)
-    alphabet_chars = list(alphabet)
-    seps_chars = list(seps)
-
-    unique_alphabet = []
-    seen = set()
-    for char in alphabet_chars:
-        if char not in seen:
-            unique_alphabet.append(char)
-            seen.add(char)
-
-    alphabet_list = [c for c in unique_alphabet if c not in seps_chars]
-    filtered_seps = [c for c in seps_chars if c in unique_alphabet]
-    seps_list = shuffle(filtered_seps, salt_chars)
-
-    if len(seps_list) == 0 or len(alphabet_list) / len(seps_list) > 3.5:
-        seps_length = max(2, (len(alphabet_list) + 3) // 4)
-        if seps_length > len(seps_list):
-            diff = seps_length - len(seps_list)
-            seps_list.extend(alphabet_list[:diff])
-            alphabet_list = alphabet_list[diff:]
-    alphabet_list = shuffle(alphabet_list, salt_chars)
-
-    guard_count = max(1, len(alphabet_list) // 12)
-    if len(alphabet_list) < 3:
-        guards = seps_list[:guard_count]
-        seps_list = seps_list[guard_count:]
-    else:
-        guards = alphabet_list[:guard_count]
-        alphabet_list = alphabet_list[guard_count:]
-
-    timestamp_ms = int(time.time() * 1000)
-    numbers = [timestamp_ms]
-    alphabet_working = list(alphabet_list)
-
-    numbers_id_int = 0
-    for i, number in enumerate(numbers):
-        numbers_id_int += number % (i + 100)
-
-    ret = [alphabet_working[numbers_id_int % len(alphabet_working)]]
-    lottery = list(ret)
-
-    for i, number in enumerate(numbers):
-        buffer = lottery + salt_chars + alphabet_working
-        alphabet_working = shuffle(alphabet_working, buffer)
-        last = to_alphabet(number, alphabet_working)
-        ret.extend(last)
-        if i + 1 < len(numbers):
-            char_code = ord(last[0])
-            extra_number = number % (char_code + i)
-            ret.append(seps_list[extra_number % len(seps_list)])
-
-    if len(ret) < min_length:
-        prefix_guard_index = (numbers_id_int + ord(ret[0])) % len(guards)
-        ret.insert(0, guards[prefix_guard_index])
-        if len(ret) < min_length:
-            suffix_guard_index = (numbers_id_int + ord(ret[2])) % len(guards)
-            ret.append(guards[suffix_guard_index])
-
-    half_length = len(alphabet_working) // 2
-    while len(ret) < min_length:
-        alphabet_working = shuffle(alphabet_working, alphabet_working)
-        ret = alphabet_working[half_length:] + ret + alphabet_working[:half_length]
-        excess = len(ret) - min_length
-        if excess > 0:
-            half_of_excess = excess // 2
-            ret = ret[half_of_excess:half_of_excess + min_length]
-
-    return ''.join(ret)
-
-
-def create_session() -> requests.Session:
-    session = requests.Session()
-    token = generate_request_token()
-    session.headers.update(build_headers(token))
-    return session
-
-
-# --- Page Configuration ---
-st.set_page_config(page_title="Golf Earnings 2014–2026", layout="wide")
-st.title("⛳ Golf Rax – Multi‑Season Earnings (2014–2026)")
-st.markdown(
-    "Build a table of golf earnings per player and season using RealSports endpoints."
+# Set page config for a professional wide-screen look
+st.set_page_config(
+    page_title="TourAX Golf Analytics",
+    page_icon="⛳",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
+def load_golf_data(folder_path):
+    """Reads all <year>-golf-data.json files and combines them into one list."""
+    combined_data = []
+    if not os.path.exists(folder_path):
+        return []
+    
+    # Sort files to ensure chronological order if needed
+    files = sorted([f for f in os.listdir(folder_path) if f.endswith('.json')])
+    
+    for filename in files:
+        file_path = os.path.join(folder_path, filename)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+                # If the file is a list of tournaments, extend
+                if isinstance(data, list):
+                    combined_data.extend(data)
+                else:
+                    combined_data.append(data)
+            except Exception as e:
+                st.error(f"Error loading {filename}: {e}")
+    
+    return combined_data
 
-# --- Upload IDs CSV ---
-uploaded_ids = st.file_uploader("Upload All_Golfer_IDs.csv", type=["csv"])
-if not uploaded_ids:
-    st.info("Please upload All_Golfer_IDs.csv to build earnings.")
-    st.stop()
+# 1. Load the data from your local folder
+raw_tournaments = load_golf_data('golf-otd')
 
+# 2. Define the HTML/React wrapper
+# We use CDN links for React, Babel (to transpile JSX on the fly), Tailwind, and Lucide Icons
+html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body {{ font-family: 'Inter', sans-serif; background-color: #FDFDFD; }}
+        .animate-in {{ animation: fadeIn 0.5s ease-out; }}
+        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-# --- GLOBAL STORAGE ---
-@st.cache_resource
-class EarningsStore:
-    def __init__(self):
-        self.multi = pd.DataFrame(
-            columns=[
-                "Player",
-                "Team",
-                "PrimaryRanking",
-                "PlayerID",
-                "Season",
-                "SeasonLabel",
-                "TotalEarnings",
-            ]
-        )
+    <script type="text/babel">
+        const {{ useState, useMemo, useEffect }} = React;
+        
+        // Injecting data from Streamlit/Python
+        const RAW_DATA = {json.dumps(raw_tournaments)};
 
-    def update_multi(self, df: pd.DataFrame):
-        self.multi = df
+        // Lucide Icon Component Wrapper for CDN
+        const Icon = ({{ name, size = 24, className = "" }}) => {{
+            useEffect(() => {{
+                if (window.lucide) window.lucide.createIcons();
+            }}, [name]);
+            return <i data-lucide={{name}} style={{ width: size, height: size }} className={{className}}></i>;
+        }};
 
-    def get_multi(self) -> pd.DataFrame:
-        return self.multi
+        // --- ENGINE LOGIC ---
+        const AnalyticsEngine = {{
+            calculateStability: (history) => {{
+                if (!history || history.length < 2) return 50;
+                const finishes = history.map(h => h.finish);
+                const avg = finishes.reduce((a, b) => a + b, 0) / finishes.length;
+                const variance = finishes.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / finishes.length;
+                const stdDev = Math.sqrt(variance);
+                return Math.max(0, Math.min(100, Math.round(100 - (stdDev * 4.5))));
+            }},
+            calculateValueScore: (totalEarnings, events) => {{
+                if (events === 0) return 0;
+                const avg = totalEarnings / events;
+                return Math.max(0, Math.min(100, Math.round((avg / 1500000) * 100)));
+            }},
+            processRawData: (tournaments) => {{
+                const playersMap = {{}};
+                tournaments.forEach(t => {{
+                    t.leaderboard.forEach(entry => {{
+                        const name = entry.player;
+                        if (!playersMap[name]) {{
+                            playersMap[name] = {{
+                                id: Math.random().toString(36).substr(2, 9),
+                                name,
+                                country: entry.country || 'N/A',
+                                wgr_rank: entry.wgr_rank || 999,
+                                total_earnings: 0,
+                                tournaments_played: 0,
+                                wins: 0,
+                                purse_dist: {{ "Major": 0, "Premium": 0, "Standard": 0 }},
+                                history: []
+                            }};
+                        }}
+                        const p = playersMap[name];
+                        p.total_earnings += entry.earnings;
+                        p.tournaments_played += 1;
+                        if (entry.finish === 1) p.wins += 1;
+                        p.purse_dist[t.type || 'Standard'] = (p.purse_dist[t.type || 'Standard'] || 0) + 1;
+                        p.wgr_rank = Math.min(p.wgr_rank, entry.wgr_rank || 999);
+                        p.history.push({{
+                            tournament: t.tournament,
+                            date: t.date,
+                            finish: entry.finish,
+                            earnings: entry.earnings,
+                            type: t.type || 'Standard'
+                        }});
+                    }});
+                }});
+                return Object.values(playersMap).map(p => {{
+                    p.history.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    p.stability = AnalyticsEngine.calculateStability(p.history);
+                    p.value_score = AnalyticsEngine.calculateValueScore(p.total_earnings, p.tournaments_played);
+                    p.top_10s = p.history.filter(h => h.finish <= 10).length;
+                    return p;
+                }}).sort((a, b) => b.total_earnings - a.total_earnings);
+            }}
+        }};
 
+        // --- UI COMPONENTS ---
+        const App = () => {{
+            const [view, setView] = useState('dashboard');
+            const [players, setPlayers] = useState([]);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [selectedPlayer, setSelectedPlayer] = useState(null);
 
-earnings_store = EarningsStore()
+            useEffect(() => {{
+                setPlayers(AnalyticsEngine.processRawData(RAW_DATA));
+            }}, []);
 
+            const filtered = players.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
-# --- Load IDs from uploaded CSV ---
-@st.cache_data
-def load_golfer_ids(file):
-    df_ids = pd.read_csv(file)
-    df_ids = df_ids.dropna(subset=["ID"])
-    df_ids["ID"] = df_ids["ID"].astype(int)
-    return df_ids[["Player", "Team", "PrimaryRanking", "ID"]]
+            return (
+                <div className="min-h-screen p-8">
+                    <header className="flex justify-between items-center mb-12">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-emerald-600 p-2 rounded-xl text-white">
+                                <Icon name="target" />
+                            </div>
+                            <h1 className="text-3xl font-black tracking-tighter">TOURAX <span className="text-emerald-600">GOLF</span></h1>
+                        </div>
+                        <input 
+                            className="bg-gray-100 px-6 py-3 rounded-2xl w-80 outline-none focus:ring-2 focus:ring-emerald-500"
+                            placeholder="Search players..."
+                            onChange={{(e) => setSearchTerm(e.target.value)}}
+                        />
+                    </header>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {{filtered.map(p => (
+                            <div key={{p.id}} className="bg-white border p-8 rounded-[40px] shadow-sm hover:shadow-xl transition-all cursor-pointer" onClick={{() => setSelectedPlayer(p)}}>
+                                <div className="flex gap-4 mb-6">
+                                    <div className="w-14 h-14 bg-gray-900 rounded-2xl flex items-center justify-center text-white font-black text-xl">
+                                        {{p.name[0]}}
+                                    </div>
+                                    <div>
+                                        <h3 className="font-black text-lg text-gray-900">{{p.name}}</h3>
+                                        <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest">Rank #{{p.wgr_rank}}</p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-gray-50 p-4 rounded-2xl">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase">Stability</p>
+                                        <p className="text-xl font-black text-gray-900">{{p.stability}}%</p>
+                                    </div>
+                                    <div className="bg-gray-50 p-4 rounded-2xl">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase">Valuation</p>
+                                        <p className="text-xl font-black text-emerald-600">{{p.value_score}}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}}
+                    </div>
 
-# --- Single-player earnings fetch for a given season ---
-def fetch_player_earnings(session: requests.Session, player_id: int, season: int):
-    url = (
-        f"{REAL_API_BASE}/userpassearnings/golf/season/{season}/"
-        f"entity/player/{player_id}"
-    )
-    try:
-        r = session.get(url, timeout=10)
-        if r.status_code != 200:
-            return None
+                    {{selectedPlayer && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-4xl rounded-[48px] overflow-hidden flex h-[80vh] animate-in">
+                                <div className="w-80 bg-gray-900 text-white p-10 flex flex-col justify-between">
+                                    <div>
+                                        <button onClick={{() => setSelectedPlayer(null)}} className="mb-8 p-2 bg-white/10 rounded-xl hover:bg-white/20">
+                                            <Icon name="chevron-left" />
+                                        </button>
+                                        <h2 className="text-4xl font-black tracking-tighter mb-2 leading-tight">{{selectedPlayer.name}}</h2>
+                                        <p className="text-emerald-400 font-black text-xs uppercase tracking-widest">{{selectedPlayer.country}}</p>
+                                    </div>
+                                    <div className="bg-white/5 p-6 rounded-3xl border border-white/10">
+                                        <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Total Earnings</p>
+                                        <p className="text-2xl font-black">${{(selectedPlayer.total_earnings/1000000).toFixed(1)}}M</p>
+                                    </div>
+                                </div>
+                                <div className="flex-grow p-10 overflow-y-auto">
+                                    <h3 className="text-xl font-black mb-6">Transaction History</h3>
+                                    <div className="space-y-3">
+                                        {{selectedPlayer.history.map((h, i) => (
+                                            <div key={{i}} className="flex items-center justify-between p-6 bg-gray-50 rounded-[32px] border">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 bg-white border rounded-xl flex items-center justify-center font-black text-sm text-gray-400">
+                                                        {{h.finish}}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-black text-gray-900">{{h.tournament}}</p>
+                                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{{h.date}}</p>
+                                                    </div>
+                                                </div>
+                                                <p className="font-black text-lg text-emerald-600">${{(h.earnings/1000).toLocaleString()}}K</p>
+                                            </div>
+                                        ))}}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}}
+                </div>
+            );
+        }};
 
-        data = r.json()
-        earnings_list = data.get("earnings", [])
-        info = data.get("info", {}) or {}
-        total = info.get("total", 0)
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+"""
 
-        return {
-            "Season": season,
-            "PlayerID": player_id,
-            "TotalEarnings": total,
-            "SeasonLabel": info.get("seasonLabel"),
-            "RawEarnings": earnings_list,
-        }
-    except Exception:
-        return None
-
-
-# --- Build earnings for all players, all seasons 2014–2026 ---
-def build_all_golf_earnings_multi_season(file, start_season: int = 2014, end_season: int = 2026):
-    df_ids = load_golfer_ids(file)
-    seasons = list(range(start_season, end_season + 1))
-
-    session = create_session()
-    results = []
-
-    total_steps = len(df_ids) * len(seasons)
-    step = 0
-    progress = st.progress(0)
-    status = st.empty()
-
-    for _, row in df_ids.iterrows():
-        player_id = int(row["ID"])
-        player_name = row["Player"]
-
-        for season in seasons:
-            step += 1
-            status.text(
-                f"Fetching earnings for {player_name} ({player_id}) – "
-                f"Season {season} [{step}/{total_steps}]..."
-            )
-
-            rec = fetch_player_earnings(session, player_id, season)
-            if rec is not None:
-                results.append(
-                    {
-                        "Player": player_name,
-                        "Team": row["Team"],
-                        "PrimaryRanking": row["PrimaryRanking"],
-                        "PlayerID": player_id,
-                        "Season": rec["Season"],         # unique per call
-                        "SeasonLabel": rec["SeasonLabel"],
-                        "TotalEarnings": rec["TotalEarnings"],
-                    }
-                )
-
-            progress.progress(step / total_steps)
-            time.sleep(0.05)  # throttle a bit
-
-    progress.empty()
-    status.empty()
-
-    if not results:
-        return pd.DataFrame(
-            columns=[
-                "Player",
-                "Team",
-                "PrimaryRanking",
-                "PlayerID",
-                "Season",
-                "SeasonLabel",
-                "TotalEarnings",
-            ]
-        )
-
-    df = pd.DataFrame(results)
-    return df
-
-
-# --- UI ---
-top_left, top_right = st.columns([1, 4])
-
-with top_left:
-    st.write("### Actions")
-    build_multi_btn = st.button("Build earnings 2014–2026", type="primary")
-
-with top_right:
-    if build_multi_btn:
-        df_multi = build_all_golf_earnings_multi_season(uploaded_ids, 2014, 2026)
-        earnings_store.update_multi(df_multi)
-
-    df_multi = earnings_store.get_multi()
-
-    if not df_multi.empty:
-        # Controls
-        col_season, col_search = st.columns([1, 3])
-        with col_season:
-            season_options = sorted(df_multi["Season"].dropna().unique().tolist())
-            season_filter = st.selectbox(
-                "Filter by season",
-                options=["All"] + season_options,
-                index=0,
-            )
-        with col_search:
-            name_filter = st.text_input(
-                "Search by player name", "", placeholder="Type part of a name..."
-            )
-
-        df_view = df_multi.copy()
-        if season_filter != "All":
-            df_view = df_view[df_view["Season"] == season_filter]
-
-        if name_filter:
-            df_view = df_view[
-                df_view["Player"].str.contains(name_filter, case=False, na=False)
-            ]
-
-        df_view = df_view.sort_values(
-            by=["Season", "TotalEarnings", "Player"],
-            ascending=[True, False, True],
-        )
-
-        st.write(
-            f"Rows: {len(df_view)} (player × season; 2014–2026 with any earnings)"
-        )
-        st.dataframe(
-            df_view[
-                [
-                    "Season",
-                    "Player",
-                    "Team",
-                    "PrimaryRanking",
-                    "PlayerID",
-                    "TotalEarnings",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        csv_multi = df_view.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download filtered earnings as CSV",
-            data=csv_multi,
-            file_name="golf_all_earnings_2014_2026_filtered.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("Click 'Build earnings 2014–2026' to start fetching data.")
+# Render the application in Streamlit
+if not raw_tournaments:
+    st.warning("⚠️ No data found. Please ensure your JSON files are in the 'golf-otd' folder.")
+else:
+    components.html(html_content, height=1000, scrolling=True)
