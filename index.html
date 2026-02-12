@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Golf Rax Tracker</title>
   <!-- React and Tailwind -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -121,8 +121,22 @@
     );
 
     // --- Helpers / parsers ---
+    const getMonthDay = (dateStr) => {
+      if (!dateStr || typeof dateStr !== "string") return null;
+      let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+      if (m) return { m: parseInt(m[2]), d: parseInt(m[3]) };
+
+      m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+      if (m) return { m: parseInt(m[1]), d: parseInt(m[2]) };
+
+      const d = new Date(dateStr);
+      if (!isNaN(d)) return { m: d.getMonth() + 1, d: d.getDate() };
+      return null;
+    };
+
     const normalizeEvents = (jsonData, sourceYear) => {
       let events = [];
+      const golferMeta = {};
 
       const checkIsDate = (str) => {
         if (typeof str !== "string") return false;
@@ -130,6 +144,25 @@
           /^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/
         );
       };
+
+      // NEW: pick up player_config names
+      if (jsonData && jsonData.player_config) {
+        const pc = jsonData.player_config;
+        Object.keys(pc).forEach((key) => {
+          const val = pc[key];
+          if (
+            val &&
+            typeof val.first_name === "string" &&
+            typeof val.last_name === "string"
+          ) {
+            const id = String(val.player_id ?? key);
+            golferMeta[id] = {
+              first_name: val.first_name,
+              last_name: val.last_name,
+            };
+          }
+        });
+      }
 
       // Heuristic 1: { golferId: { date: rax } }
       if (typeof jsonData === "object" && !Array.isArray(jsonData)) {
@@ -165,18 +198,17 @@
                     sourceYear ||
                     parseInt(dateStr.substring(0, 4)) ||
                     new Date().getFullYear(),
-                  golferId: golferId,
+                  golferId: String(golferId),
                   rax: parseFloat(raxVal),
                 });
               }
             }
           }
-          return events;
         }
       }
 
       // Heuristic 2: { date: { golferId: rax } }
-      if (typeof jsonData === "object" && !Array.isArray(jsonData)) {
+      if (events.length === 0 && typeof jsonData === "object" && !Array.isArray(jsonData)) {
         let isDateMap = true;
         let validDateFound = false;
         for (let key in jsonData) {
@@ -195,97 +227,99 @@
                     sourceYear ||
                     parseInt(dateStr.substring(0, 4)) ||
                     new Date().getFullYear(),
-                  golferId: golferId,
+                  golferId: String(golferId),
                   rax: parseFloat(raxVal),
                 });
               }
             }
           }
-          return events;
         }
       }
 
-      // Heuristic 3: array / deep objects with date + rax keys
-      let flatArr = [];
-      const flattenToArr = (obj) => {
-        if (Array.isArray(obj)) obj.forEach(flattenToArr);
-        else if (obj && typeof obj === "object") {
-          let hasDate = false,
-            hasRax = false;
+      // Heuristic 3: deep array scan
+      if (events.length === 0) {
+        let flatArr = [];
+        const flattenToArr = (obj) => {
+          if (Array.isArray(obj)) obj.forEach(flattenToArr);
+          else if (obj && typeof obj === "object") {
+            let hasDate = false,
+              hasRax = false;
+            for (let key in obj) {
+              if (key.toLowerCase().match(/date|time/)) hasDate = true;
+              if (key.toLowerCase().match(/rax|earn|rating|value|score/))
+                hasRax = true;
+            }
+            if (hasDate && hasRax) flatArr.push(obj);
+            else for (let key in obj) flattenToArr(obj[key]);
+          }
+        };
+        flattenToArr(jsonData);
+
+        if (flatArr.length > 0) {
+          flatArr.forEach((item) => {
+            const keys = Object.keys(item);
+            const dateKey = keys.find((k) =>
+              k.toLowerCase().match(/date|time/)
+            );
+            const raxKey = keys.find((k) =>
+              k.toLowerCase().match(/rax|earn|rating|value|score/)
+            );
+            const idKey = keys.find((k) =>
+              k.toLowerCase().match(/id|player|golfer/)
+            );
+
+            if (dateKey && raxKey) {
+              const dateStr = item[dateKey];
+              events.push({
+                date: String(dateStr),
+                year:
+                  sourceYear ||
+                  parseInt(String(dateStr).substring(0, 4)) ||
+                  new Date().getFullYear(),
+                golferId: idKey ? String(item[idKey]) : "Unknown",
+                rax: parseFloat(item[raxKey]) || 0,
+              });
+            }
+          });
+        }
+      }
+
+      // Heuristic 4: deep date-number scan
+      if (events.length === 0) {
+        const deepScan = (obj, parentKey) => {
+          if (!obj || typeof obj !== "object") return;
           for (let key in obj) {
-            if (key.toLowerCase().match(/date|time/)) hasDate = true;
-            if (key.toLowerCase().match(/rax|earn|rating|value|score/))
-              hasRax = true;
+            const val = obj[key];
+            if (typeof val === "number" && checkIsDate(key)) {
+              events.push({
+                date: key,
+                year: sourceYear || parseInt(key.substring(0, 4)),
+                golferId: String(parentKey),
+                rax: val,
+              });
+            } else if (typeof val === "object") {
+              deepScan(val, isNaN(key) ? key : parentKey);
+            }
           }
-          if (hasDate && hasRax) flatArr.push(obj);
-          else for (let key in obj) flattenToArr(obj[key]);
-        }
-      };
-      flattenToArr(jsonData);
-
-      if (flatArr.length > 0) {
-        flatArr.forEach((item) => {
-          const keys = Object.keys(item);
-          const dateKey = keys.find((k) => k.toLowerCase().match(/date|time/));
-          const raxKey = keys.find((k) =>
-            k.toLowerCase().match(/rax|earn|rating|value|score/)
-          );
-          const idKey = keys.find((k) =>
-            k.toLowerCase().match(/id|player|golfer/)
-          );
-
-          if (dateKey && raxKey) {
-            const dateStr = item[dateKey];
-            events.push({
-              date: String(dateStr),
-              year:
-                sourceYear ||
-                parseInt(String(dateStr).substring(0, 4)) ||
-                new Date().getFullYear(),
-              golferId: idKey ? String(item[idKey]) : "Unknown",
-              rax: parseFloat(item[raxKey]) || 0,
-            });
-          }
-        });
-        if (events.length > 0) return events;
+        };
+        deepScan(jsonData, "Unknown");
       }
 
-      // Heuristic 4: deep scan any number mapped to a date key
-      const deepScan = (obj, parentKey) => {
-        if (!obj || typeof obj !== "object") return;
-        for (let key in obj) {
-          const val = obj[key];
-          if (typeof val === "number" && checkIsDate(key)) {
-            events.push({
-              date: key,
-              year: sourceYear || parseInt(key.substring(0, 4)),
-              golferId: parentKey,
-              rax: val,
-            });
-          } else if (typeof val === "object") {
-            deepScan(val, isNaN(key) ? key : parentKey);
-          }
-        }
-      };
-      deepScan(jsonData, "Unknown");
+      // Attach names from golferMeta
+      events = events.map((e) => {
+        const meta = golferMeta[e.golferId];
+        if (!meta) return e;
+        return {
+          ...e,
+          first_name: meta.first_name,
+          last_name: meta.last_name,
+        };
+      });
 
       return events;
     };
 
-    const getMonthDay = (dateStr) => {
-      if (!dateStr || typeof dateStr !== "string") return null;
-      let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-      if (m) return { m: parseInt(m[2]), d: parseInt(m[3]) };
-
-      m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-      if (m) return { m: parseInt(m[1]), d: parseInt(m[2]) };
-
-      const d = new Date(dateStr);
-      if (!isNaN(d)) return { m: d.getMonth() + 1, d: d.getDate() };
-      return null;
-    };
-
-    // --- Rankings (UFC-style list) ---
+    // --- Rankings (UFC-style) ---
     const RankingsView = ({ events }) => {
       const [search, setSearch] = useState("");
       const [activeOnly, setActiveOnly] = useState(false);
@@ -294,8 +328,13 @@
         const map = {};
         events.forEach((e) => {
           if (!map[e.golferId]) {
+            const fullName =
+              e.first_name && e.last_name
+                ? `${e.first_name} ${e.last_name}`
+                : undefined;
             map[e.golferId] = {
               golferId: e.golferId,
+              name: fullName,
               totalRax: 0,
               events: 0,
               lastYear: e.year,
@@ -304,6 +343,9 @@
           map[e.golferId].totalRax += e.rax;
           map[e.golferId].events += 1;
           if (e.year > map[e.golferId].lastYear) map[e.golferId].lastYear = e.year;
+          if (e.first_name && e.last_name) {
+            map[e.golferId].name = `${e.first_name} ${e.last_name}`;
+          }
         });
         return Object.values(map);
       }, [events]);
@@ -312,11 +354,15 @@
         return golfers
           .filter((g) => {
             if (!search) return true;
-            return String(g.golferId)
-              .toLowerCase()
-              .includes(search.toLowerCase());
+            const needle = search.toLowerCase();
+            const nameMatch = g.name
+              ? g.name.toLowerCase().includes(needle)
+              : false;
+            return (
+              nameMatch ||
+              String(g.golferId).toLowerCase().includes(needle)
+            );
           })
-          // simple active definition: events in 2024+
           .filter((g) => !activeOnly || g.lastYear >= 2024)
           .sort((a, b) => b.totalRax - a.totalRax)
           .map((g, i) => ({ ...g, rank: i + 1 }));
@@ -362,35 +408,40 @@
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((g) => (
-                  <tr
-                    key={g.golferId}
-                    className="border-b border-gray-100 hover:bg-gray-50"
-                  >
-                    <td className="py-2 px-2 text-gray-500 font-mono">{g.rank}</td>
-                    <td className="py-2 px-2 font-medium text-gray-800">
-                      {/^\d+$/.test(g.golferId)
-                        ? `Golfer ID: ${g.golferId}`
-                        : g.golferId}
-                    </td>
-                    <td className="py-2 px-2 text-right font-semibold text-gray-800">
-                      {g.totalRax.toLocaleString(undefined, {
-                        maximumFractionDigits: 1,
-                      })}
-                    </td>
-                    <td className="py-2 px-2 text-right text-gray-700">
-                      {g.events}
-                    </td>
-                    <td className="py-2 px-2 text-right text-gray-700">
-                      {g.lastYear}
-                    </td>
-                    <td className="py-2 px-2 text-right">
-                      <button className="text-xs font-semibold text-green-700 hover:text-green-900">
-                        Detail View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((g) => {
+                  const displayName =
+                    g.name ||
+                    (/^\d+$/.test(g.golferId)
+                      ? `Golfer ID: ${g.golferId}`
+                      : g.golferId);
+                  return (
+                    <tr
+                      key={g.golferId}
+                      className="border-b border-gray-100 hover:bg-gray-50"
+                    >
+                      <td className="py-2 px-2 text-gray-500 font-mono">{g.rank}</td>
+                      <td className="py-2 px-2 font-medium text-gray-800">
+                        {displayName}
+                      </td>
+                      <td className="py-2 px-2 text-right font-semibold text-gray-800">
+                        {g.totalRax.toLocaleString(undefined, {
+                          maximumFractionDigits: 1,
+                        })}
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-700">
+                        {g.events}
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-700">
+                        {g.lastYear}
+                      </td>
+                      <td className="py-2 px-2 text-right">
+                        <button className="text-xs font-semibold text-green-700 hover:text-green-900">
+                          Detail View
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={6} className="py-6 text-center text-gray-500">
@@ -405,7 +456,7 @@
       );
     };
 
-    // --- OTD view (your original logic, wrapped) ---
+    // --- OTD view ---
     const OtdView = ({ events, month, day, setMonth, setDay, handleFiles }) => {
       const [innerMode, setInnerMode] = useState("investments");
 
@@ -423,8 +474,11 @@
           if (!groups[e.year]) groups[e.year] = { total: 0, golfers: {} };
           groups[e.year].total += e.rax;
           if (!groups[e.year].golfers[e.golferId])
-            groups[e.year].golfers[e.golferId] = 0;
-          groups[e.year].golfers[e.golferId] += e.rax;
+            groups[e.year].golfers[e.golferId] = { total: 0, name: undefined };
+          groups[e.year].golfers[e.golferId].total += e.rax;
+          if (e.first_name && e.last_name) {
+            groups[e.year].golfers[e.golferId].name = `${e.first_name} ${e.last_name}`;
+          }
         });
         return groups;
       }, [otdEvents]);
@@ -435,11 +489,15 @@
       const golferAggregates = useMemo(() => {
         const groups = {};
         otdEvents.forEach((e) => {
-          if (!groups[e.golferId])
-            groups[e.golferId] = { total: 0, years: {} };
+          if (!groups[e.golferId]) {
+            groups[e.golferId] = { total: 0, years: {}, name: undefined };
+          }
           groups[e.golferId].total += e.rax;
           groups[e.golferId].years[e.year] =
             (groups[e.golferId].years[e.year] || 0) + e.rax;
+          if (e.first_name && e.last_name) {
+            groups[e.golferId].name = `${e.first_name} ${e.last_name}`;
+          }
         });
         return groups;
       }, [otdEvents]);
@@ -614,6 +672,11 @@
                       const activeYears = Object.keys(data.years).sort(
                         (a, b) => b - a
                       );
+                      const displayName =
+                        data.name ||
+                        (/^\d+$/.test(gId)
+                          ? `Golfer ID: ${gId}`
+                          : gId);
                       return (
                         <li
                           key={gId}
@@ -625,14 +688,12 @@
                             </span>
                             <div>
                               <div className="font-bold text-gray-800 text-lg">
-                                {/^\d+$/.test(gId)
-                                  ? `Golfer ID: ${gId}`
-                                  : gId}
+                                {displayName}
                               </div>
                               <div className="text-xs text-gray-500 mt-1 font-medium bg-gray-200 inline-block px-2 py-0.5 rounded">
                                 {activeYears.length}{" "}
-                                {activeYears.length === 1 ? "Year" : "Years"}
-                                : {activeYears.join(", ")}
+                                {activeYears.length === 1 ? "Year" : "Years"}:{" "}
+                                {activeYears.join(", ")}
                               </div>
                             </div>
                           </div>
@@ -658,9 +719,12 @@
                 sortedYears.map((year) => {
                   const data = yearGroups[year];
                   const sortedGolfers = Object.keys(data.golfers).sort(
-                    (a, b) => data.golfers[b] - data.golfers[a]
+                    (a, b) =>
+                      data.golfers[b].total - data.golfers[a].total
                   );
-                  const maxRax = Math.max(...Object.values(data.golfers));
+                  const maxRax = Math.max(
+                    ...Object.values(data.golfers).map((g) => g.total)
+                  );
 
                   return (
                     <div
@@ -680,34 +744,40 @@
                         </span>
                       </div>
                       <ul className="divide-y divide-gray-100">
-                        {sortedGolfers.map((gId, index) => (
-                          <li
-                            key={gId}
-                            className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="text-gray-400 font-mono text-sm w-4">
-                                {index + 1}.
-                              </span>
-                              <span className="font-medium text-gray-800 text-lg">
-                                {/^\d+$/.test(gId)
-                                  ? `Golfer ID: ${gId}`
-                                  : gId}
-                              </span>
-                              {data.golfers[gId] === maxRax && (
-                                <span className="text-[10px] uppercase tracking-wider bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full font-bold shadow-sm">
-                                  Top Earner
+                        {sortedGolfers.map((gId, index) => {
+                          const gData = data.golfers[gId];
+                          const displayName =
+                            gData.name ||
+                            (/^\d+$/.test(gId)
+                              ? `Golfer ID: ${gId}`
+                              : gId);
+                          return (
+                            <li
+                              key={gId}
+                              className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="text-gray-400 font-mono text-sm w-4">
+                                  {index + 1}.
                                 </span>
-                              )}
-                            </div>
-                            <span className="text-gray-600 font-semibold text-lg">
-                              {data.golfers[gId].toLocaleString(undefined, {
-                                minimumFractionDigits: 0,
-                                maximumFractionDigits: 1,
-                              })}
-                            </span>
-                          </li>
-                        ))}
+                                <span className="font-medium text-gray-800 text-lg">
+                                  {displayName}
+                                </span>
+                                {gData.total === maxRax && (
+                                  <span className="text-[10px] uppercase tracking-wider bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full font-bold shadow-sm">
+                                    Top Earner
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-gray-600 font-semibold text-lg">
+                                {gData.total.toLocaleString(undefined, {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 1,
+                                })}
+                              </span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   );
@@ -718,16 +788,28 @@
       );
     };
 
-    // --- Who to Buy (simple top 10 list) ---
+    // --- Who to Buy ---
     const WhoToBuyView = ({ events }) => {
       const golfers = useMemo(() => {
         const map = {};
         events.forEach((e) => {
           if (!map[e.golferId]) {
-            map[e.golferId] = { golferId: e.golferId, totalRax: 0, events: 0 };
+            const name =
+              e.first_name && e.last_name
+                ? `${e.first_name} ${e.last_name}`
+                : undefined;
+            map[e.golferId] = {
+              golferId: e.golferId,
+              name,
+              totalRax: 0,
+              events: 0,
+            };
           }
           map[e.golferId].totalRax += e.rax;
           map[e.golferId].events += 1;
+          if (e.first_name && e.last_name) {
+            map[e.golferId].name = `${e.first_name} ${e.last_name}`;
+          }
         });
         return Object.values(map)
           .sort((a, b) => b.totalRax - a.totalRax)
@@ -741,29 +823,34 @@
             Simple version: top 10 golfers by total OTD Rax across all years.
           </p>
           <ul className="divide-y divide-gray-100">
-            {golfers.map((g, i) => (
-              <li
-                key={g.golferId}
-                className="py-3 flex justify-between items-center"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-gray-400 font-mono text-sm w-4">
-                    {i + 1}.
+            {golfers.map((g, i) => {
+              const displayName =
+                g.name ||
+                (/^\d+$/.test(g.golferId)
+                  ? `Golfer ID: ${g.golferId}`
+                  : g.golferId);
+              return (
+                <li
+                  key={g.golferId}
+                  className="py-3 flex justify-between items-center"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-gray-400 font-mono text-sm w-4">
+                      {i + 1}.
+                    </span>
+                    <span className="font-medium text-gray-800">
+                      {displayName}
+                    </span>
+                  </div>
+                  <span className="font-semibold text-green-700">
+                    {g.totalRax.toLocaleString(undefined, {
+                      maximumFractionDigits: 1,
+                    })}{" "}
+                    Rax
                   </span>
-                  <span className="font-medium text-gray-800">
-                    {/^\d+$/.test(g.golferId)
-                      ? `Golfer ID: ${g.golferId}`
-                      : g.golferId}
-                  </span>
-                </div>
-                <span className="font-semibold text-green-700">
-                  {g.totalRax.toLocaleString(undefined, {
-                    maximumFractionDigits: 1,
-                  })}{" "}
-                  Rax
-                </span>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </div>
       );
@@ -790,9 +877,8 @@
               try {
                 const jRes = await fetch(`./golf-otd/${y}-golf-data.json`);
                 if (jRes.ok) {
-                  localEvents = localEvents.concat(
-                    normalizeEvents(await jRes.json(), y)
-                  );
+                  const json = await jRes.json();
+                  localEvents = localEvents.concat(normalizeEvents(json, y));
                   loadedAny = true;
                 }
               } catch (e) {
