@@ -66,11 +66,18 @@
                     const rax = obj.earnings !== undefined ? obj.earnings : obj.rax;
                     const gId = String(obj.player_id || potentialPlayerId);
                     
-                    // Only add if it's a valid date string
                     if (typeof obj.date === 'string' && obj.date.match(/\d{4}/)) {
+                        const dateStr = String(obj.date);
+                        let extractedYear = null;
+                        
+                        // Extract year directly from the date string to prevent filename overrides
+                        const yMatch = dateStr.match(/\b(20\d{2})\b/);
+                        if (yMatch) extractedYear = parseInt(yMatch[1]);
+                        
                         events.push({
-                            date: String(obj.date),
-                            year: sourceYear || parseInt(String(obj.date).substring(0, 4)) || new Date().getFullYear(),
+                            eventId: obj.id ? String(obj.id) : null,
+                            date: dateStr,
+                            year: extractedYear || sourceYear || new Date().getFullYear(),
                             golferId: gId,
                             rax: parseFloat(rax) || 0
                         });
@@ -125,6 +132,18 @@
             const [isLoading, setIsLoading] = useState(true);
             const [viewMode, setViewMode] = useState('investments');
 
+            // --- Deduplication Helper ---
+            // Ensures that if cumulative historical files are loaded, 
+            // the exact same events are not double-counted.
+            const deduplicateEvents = (eventList) => {
+                const map = new Map();
+                eventList.forEach(e => {
+                    const key = e.eventId ? `id_${e.eventId}` : `dedupe_${e.golferId}_${e.date}_${e.rax}`;
+                    map.set(key, e);
+                });
+                return Array.from(map.values());
+            };
+
             useEffect(() => {
                 const attemptAutoFetch = async () => {
                     setIsLoading(true);
@@ -150,7 +169,7 @@
                     }
 
                     if (loadedAny && allEvents.length > 0) {
-                        setEvents(allEvents);
+                        setEvents(deduplicateEvents(allEvents));
                         setGolferNames(allNames);
                         setDataLoaded(true);
                     }
@@ -179,7 +198,7 @@
                     }
                 }
                 
-                setEvents(prev => [...prev, ...newEvents]);
+                setEvents(prev => deduplicateEvents([...prev, ...newEvents]));
                 setGolferNames(prev => ({...prev, ...newNames}));
                 setDataLoaded(true);
                 setIsLoading(false);
