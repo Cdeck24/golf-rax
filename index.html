@@ -183,6 +183,7 @@
             // New state for Player Search, Accordion, Year selector, and Multiplier
             const [searchQuery, setSearchQuery] = useState('');
             const [expandedPlayer, setExpandedPlayer] = useState(null);
+            const [expandedYearPlayer, setExpandedYearPlayer] = useState(null);
             const [selectedYear, setSelectedYear] = useState('');
             const [currentMultiplier, setCurrentMultiplier] = useState(1);
 
@@ -260,6 +261,21 @@
                 return /^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId;
             };
 
+            const getMonthDay = (dateStr) => {
+                if (!dateStr || typeof dateStr !== 'string') return null;
+                let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+                if (m) return { m: parseInt(m[2]), d: parseInt(m[3]) };
+                
+                m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+                if (m) return { m: parseInt(m[1]), d: parseInt(m[2]) };
+                
+                const d = new Date(dateStr);
+                if (!isNaN(d)) return { m: d.getMonth() + 1, d: d.getDate() };
+                return null;
+            };
+
+            const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
             // Scale events by current Rarity Multiplier
             const adjustedEvents = useMemo(() => {
                 return events.map(e => ({
@@ -269,13 +285,17 @@
             }, [events, currentMultiplier]);
 
             // Aggregate data by year using ADJUSTED events
+            // Now preserving events for monthly breakdown inside By Year
             const yearGroups = useMemo(() => {
                 const groups = {};
                 adjustedEvents.forEach(e => {
                     if (!groups[e.year]) groups[e.year] = { total: 0, golfers: {} };
                     groups[e.year].total += e.rax;
-                    if (!groups[e.year].golfers[e.golferId]) groups[e.year].golfers[e.golferId] = 0;
-                    groups[e.year].golfers[e.golferId] += e.rax;
+                    if (!groups[e.year].golfers[e.golferId]) {
+                        groups[e.year].golfers[e.golferId] = { total: 0, events: [] };
+                    }
+                    groups[e.year].golfers[e.golferId].total += e.rax;
+                    groups[e.year].golfers[e.golferId].events.push(e);
                 });
                 return groups;
             }, [adjustedEvents]);
@@ -558,7 +578,7 @@
                                             </div>
                                         )}
 
-                                        {/* Year-by-Year View (Scrollable with dropdown selector) */}
+                                        {/* Year-by-Year View (Scrollable with dropdown selector & daily breakdown) */}
                                         {viewMode === 'years' && (
                                             <div className="bg-gray-900/60 backdrop-blur-sm rounded-3xl border border-gray-800 shadow-xl flex flex-col" style={{ height: '70vh', minHeight: '500px' }}>
                                                 {/* Header with Selector */}
@@ -568,7 +588,10 @@
                                                         <div className="relative">
                                                             <select 
                                                                 value={selectedYear || ''} 
-                                                                onChange={(e) => setSelectedYear(e.target.value)}
+                                                                onChange={(e) => {
+                                                                    setSelectedYear(e.target.value);
+                                                                    setExpandedYearPlayer(null); // Reset accordion on year change
+                                                                }}
                                                                 className="appearance-none bg-gray-950/80 border border-gray-700 text-emerald-400 font-bold rounded-xl pl-4 pr-10 py-2 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all cursor-pointer shadow-inner"
                                                             >
                                                                 {sortedYears.map(y => <option key={y} value={y}>{y}</option>)}
@@ -578,15 +601,6 @@
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    
-                                                    {selectedYear && yearGroups[selectedYear] && (
-                                                        <div className="flex flex-col items-end w-full sm:w-auto">
-                                                            <span className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-0.5">Year Total</span>
-                                                            <span className="font-black text-emerald-400 text-lg tracking-tight">
-                                                                {yearGroups[selectedYear].total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} <span className="text-sm opacity-70 font-semibold">RAX</span>
-                                                            </span>
-                                                        </div>
-                                                    )}
                                                 </div>
                                                 
                                                 {/* Scrollable List Container */}
@@ -594,33 +608,104 @@
                                                     <ul className="divide-y divide-gray-800/50">
                                                         {selectedYear && yearGroups[selectedYear] && (() => {
                                                             const data = yearGroups[selectedYear];
-                                                            const sortedGolfers = Object.keys(data.golfers).sort((a,b) => data.golfers[b] - data.golfers[a]);
-                                                            const maxRax = Math.max(...Object.values(data.golfers));
+                                                            const sortedGolfers = Object.keys(data.golfers).sort((a,b) => data.golfers[b].total - data.golfers[a].total);
+                                                            const maxRax = Math.max(...Object.values(data.golfers).map(g => g.total));
                                                             
-                                                            return sortedGolfers.map((gId, index) => (
-                                                                <li key={gId} className="px-6 md:px-8 py-4 flex justify-between items-center hover:bg-gray-800/40 transition-colors group">
-                                                                    <div className="flex items-center gap-4">
-                                                                        <div className="flex items-center justify-center min-w-[28px] h-7 rounded-full bg-gray-800 border border-gray-700 text-xs font-bold text-gray-400 group-hover:bg-gray-700 transition-colors">
-                                                                            {index + 1}
-                                                                        </div>
-                                                                        <div className="flex items-center gap-3">
-                                                                            <span className="font-semibold text-gray-200 text-lg group-hover:text-white transition-colors">
-                                                                                {getDisplayName(gId)}
-                                                                            </span>
-                                                                            {data.golfers[gId] === maxRax && (
-                                                                                <span className="hidden sm:inline-block text-[10px] uppercase tracking-widest bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-md font-bold border border-emerald-500/20">
-                                                                                    Top Earner
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                    <div className="text-right flex items-baseline gap-1.5">
-                                                                        <span className="text-gray-100 font-bold text-xl tracking-tight">
-                                                                            {data.golfers[gId].toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
-                                                                        </span>
-                                                                    </div>
-                                                                </li>
-                                                            ));
+                                                            return sortedGolfers.map((gId, index) => {
+                                                                const isExpanded = expandedYearPlayer === gId;
+                                                                
+                                                                // Process monthly data for the expanded player
+                                                                let monthlyData = {};
+                                                                if (isExpanded) {
+                                                                    data.golfers[gId].events.forEach(e => {
+                                                                        const md = getMonthDay(e.date);
+                                                                        if (md) {
+                                                                            const monthName = monthsList[md.m - 1] || "Unknown Month";
+                                                                            if (!monthlyData[monthName]) {
+                                                                                monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
+                                                                            }
+                                                                            monthlyData[monthName].total += e.rax;
+                                                                            
+                                                                            // Combine rax if same day
+                                                                            const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
+                                                                            if (existingDay) {
+                                                                                existingDay.rax += e.rax;
+                                                                            } else {
+                                                                                monthlyData[monthName].days.push({ day: md.d, dateStr: e.date, rax: e.rax });
+                                                                            }
+                                                                        }
+                                                                    });
+                                                                }
+
+                                                                const sortedMonths = Object.entries(monthlyData).sort((a,b) => a[1].mIdx - b[1].mIdx);
+
+                                                                return (
+                                                                    <li key={gId} className="flex flex-col group">
+                                                                        <button 
+                                                                            onClick={() => setExpandedYearPlayer(isExpanded ? null : gId)}
+                                                                            className="px-6 md:px-8 py-4 flex justify-between items-center hover:bg-gray-800/40 transition-colors w-full text-left"
+                                                                        >
+                                                                            <div className="flex items-center gap-4">
+                                                                                <div className={`flex items-center justify-center min-w-[28px] h-7 rounded-full text-xs font-bold transition-colors ${index === 0 ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-gray-800 border border-gray-700 text-gray-400 group-hover:bg-gray-700'}`}>
+                                                                                    {index + 1}
+                                                                                </div>
+                                                                                <div className="flex items-center gap-3">
+                                                                                    <span className="font-semibold text-gray-200 text-lg group-hover:text-white transition-colors">
+                                                                                        {getDisplayName(gId)}
+                                                                                    </span>
+                                                                                    {data.golfers[gId].total === maxRax && (
+                                                                                        <span className="hidden sm:inline-block text-[10px] uppercase tracking-widest bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-md font-bold border border-emerald-500/20">
+                                                                                            Top Earner
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className="text-right flex items-center gap-4">
+                                                                                <div className="flex items-baseline gap-1.5">
+                                                                                    <span className="text-gray-100 font-bold text-xl tracking-tight">
+                                                                                        {data.golfers[gId].total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <ChevronIcon expanded={isExpanded} className="text-gray-500 group-hover:text-emerald-400" />
+                                                                            </div>
+                                                                        </button>
+
+                                                                        {/* Dropdown Monthly Breakdown Content */}
+                                                                        {isExpanded && (
+                                                                            <div className="bg-gray-950/30 px-6 md:px-8 py-5 border-t border-gray-800/50 animate-fade-in">
+                                                                                {sortedMonths.length === 0 ? (
+                                                                                    <div className="text-gray-500 text-sm">No valid dates found for this data.</div>
+                                                                                ) : (
+                                                                                    <div className="space-y-6">
+                                                                                        {sortedMonths.map(([month, mData]) => (
+                                                                                            <div key={month} className="flex flex-col">
+                                                                                                <div className="flex justify-between items-center mb-3 px-1 border-b border-gray-800/50 pb-2">
+                                                                                                    <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest">{month}</h4>
+                                                                                                    <span className="text-xs font-bold text-emerald-400 bg-emerald-900/20 px-2.5 py-1 rounded-md border border-emerald-800/40">
+                                                                                                        {mData.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} Rax Total
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                <ul className="space-y-2">
+                                                                                                    {mData.days.sort((a,b) => a.day - b.day).map((dayItem, dIdx) => (
+                                                                                                        <li key={dIdx} className="flex justify-between items-center px-4 py-3 rounded-xl bg-gray-800/30 border border-gray-700/30 hover:bg-gray-800/60 transition-colors">
+                                                                                                            <div className="flex items-center gap-3">
+                                                                                                                <span className="text-gray-300 font-medium text-sm">{month} {dayItem.day}</span>
+                                                                                                            </div>
+                                                                                                            <div className="text-emerald-400 font-bold tracking-tight text-sm">
+                                                                                                                +{dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                                                                                                            </div>
+                                                                                                        </li>
+                                                                                                    ))}
+                                                                                                </ul>
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </li>
+                                                                );
+                                                            });
                                                         })()}
                                                     </ul>
                                                 </div>
