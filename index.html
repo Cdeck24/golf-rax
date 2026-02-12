@@ -38,6 +38,9 @@
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="text-gray-100 min-h-screen relative selection:bg-emerald-500/30">
@@ -96,6 +99,8 @@
             { label: 'Iconic 19 (240x)', value: 240 },
             { label: 'Iconic 20 (250x)', value: 250 }
         ];
+
+        const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
         // --- SVGs & Icons ---
         const GolfPinIcon = ({size=24, className=""}) => (
@@ -179,6 +184,19 @@
             return { events, names: localNames };
         };
 
+        const getMonthDay = (dateStr) => {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            // Matches YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+            let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+            if (m) return { y: parseInt(m[1]), m: parseInt(m[2]), d: parseInt(m[3]) };
+            
+            // Matches MM-DD-YYYY etc
+            m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+            if (m) return { y: parseInt(m[3]), m: parseInt(m[1]), d: parseInt(m[2]) };
+            
+            return null;
+        };
+
         const App = () => {
             const [events, setEvents] = useState([]);
             const [golferNames, setGolferNames] = useState({});
@@ -188,6 +206,7 @@
             const [searchQuery, setSearchQuery] = useState('');
             const [expandedPlayer, setExpandedPlayer] = useState(null);
             const [expandedYearPlayer, setExpandedYearPlayer] = useState(null);
+            const [expandedSeason, setExpandedSeason] = useState(null); // Expansion state for Seasons tab
             const [selectedYear, setSelectedYear] = useState('');
             const [currentMultiplier, setCurrentMultiplier] = useState(1);
 
@@ -300,13 +319,31 @@
                 return seasons.sort((a, b) => b.rax - a.rax);
             }, [golferAggregates]);
 
+            // Helper to get breakdown for a specific season
+            const getSeasonBreakdown = (gId, year) => {
+                const seasonalEvents = adjustedEvents.filter(e => e.golferId === gId && String(e.year) === String(year));
+                let monthlyData = {};
+                seasonalEvents.forEach(e => {
+                    const md = getMonthDay(e.date);
+                    if (md) {
+                        const monthName = monthsList[md.m - 1] || "Unknown";
+                        if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
+                        monthlyData[monthName].total += e.rax;
+                        const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
+                        if (existingDay) existingDay.rax += e.rax;
+                        else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
+                    }
+                });
+                return Object.entries(monthlyData).sort((a, b) => a[1].mIdx - b[1].mIdx);
+            };
+
             return (
                 <div className="pb-12 sm:pb-24 overflow-x-hidden">
                     {/* Header */}
                     <header className="bg-gray-950/80 backdrop-blur-xl border-b border-emerald-500/20 sticky top-0 z-50 shadow-lg">
                         <div className="max-w-4xl mx-auto flex justify-between items-center p-3 sm:p-5 px-4 sm:px-6">
                             <h1 className="text-lg sm:text-xl md:text-2xl font-black tracking-tighter flex items-center gap-2 sm:gap-3 text-white uppercase">
-                                <div className="p-1.5 sm:p-2 bg-emerald-500/20 rounded-lg sm:rounded-xl text-emerald-400 border border-emerald-500/30">
+                                <div className="p-1.5 sm:p-2 bg-emerald-500/20 rounded-lg sm:rounded-xl text-emerald-400 border border-emerald-500/30 text-center flex items-center justify-center">
                                     <GolfPinIcon size={20} className="sm:w-[22px] sm:h-[22px]" />
                                 </div>
                                 Golf Rax Tracker
@@ -321,7 +358,7 @@
                                 <p className="text-base sm:text-lg font-bold tracking-widest uppercase">Consulting Scorecards...</p>
                             </div>
                         ) : !dataLoaded ? (
-                            <div className="glass-card p-8 sm:p-10 md:p-16 rounded-2xl sm:rounded-3xl shadow-2xl text-center relative overflow-hidden mx-2">
+                            <div className="glass-card p-8 sm:p-10 md:p-16 rounded-2xl sm:rounded-3xl shadow-2xl text-center relative overflow-hidden mx-2 border border-emerald-500/10">
                                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-600 to-emerald-400"></div>
                                 <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gray-900 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-5 sm:mb-6 shadow-inner border border-emerald-500/30">
                                     <UploadIcon size={32} className="sm:w-9 sm:h-9" />
@@ -383,7 +420,7 @@
 
                                 {/* Results Rendering */}
                                 {sortedYears.length === 0 ? (
-                                    <div className="text-center p-12 sm:p-16 glass-card rounded-2xl sm:rounded-3xl text-gray-500">
+                                    <div className="text-center p-12 sm:p-16 glass-card rounded-2xl sm:rounded-3xl border border-emerald-500/10 text-gray-500">
                                         <CalendarXIcon size={48} className="mx-auto mb-4 opacity-20 sm:w-16 sm:h-16" />
                                         <h3 className="text-xl sm:text-2xl font-black text-gray-300 tracking-tight uppercase">Leaderboard Empty</h3>
                                         <p className="mt-2 text-sm sm:text-lg font-medium">Please import JSON scorecards.</p>
@@ -391,7 +428,7 @@
                                 ) : (
                                     <div className="space-y-6 sm:space-y-8">
                                         
-                                        {/* Player Search View */}
+                                        {/* Player Search View (Interactive Accordion) */}
                                         {viewMode === 'investments' && (
                                             <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-4 border-b border-gray-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 shrink-0">
@@ -478,36 +515,74 @@
                                             </div>
                                         )}
 
-                                        {/* Best Seasons View */}
+                                        {/* Best Seasons View (Interactive Accordion) */}
                                         {viewMode === 'seasons' && (
                                             <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-5 border-b border-gray-800 shrink-0">
-                                                    <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase">All-Time Seasons</h3>
+                                                    <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase">Season Rankings</h3>
                                                 </div>
                                                 <div className="overflow-y-auto overflow-x-hidden flex-1 no-scrollbar">
                                                     <ul className="divide-y divide-gray-800/50">
-                                                        {topSeasons.map((season, index) => (
-                                                            <li key={`${season.golferId}-${season.year}`} className="px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all group gap-3 border-l-4 border-transparent hover:border-emerald-500">
-                                                                <div className="flex items-center gap-3 sm:gap-5 truncate">
-                                                                    <div className={`flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300 ${index < 3 ? 'ring-2 ring-emerald-500/30' : ''}`}>
-                                                                        {index + 1}
-                                                                    </div>
-                                                                    <div className="truncate">
-                                                                        <span className="font-black text-gray-100 text-sm sm:text-lg tracking-tight uppercase group-hover:text-emerald-400 transition-colors truncate">
-                                                                            {getDisplayName(season.golferId)}
-                                                                        </span>
-                                                                        <div className="text-[9px] font-black bg-emerald-950/40 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest w-max mt-0.5">
-                                                                            {season.year} Season
+                                                        {topSeasons.map((season, index) => {
+                                                            const seasonKey = `${season.golferId}-${season.year}`;
+                                                            const isExpanded = expandedSeason === seasonKey;
+                                                            const breakdown = isExpanded ? getSeasonBreakdown(season.golferId, season.year) : [];
+
+                                                            return (
+                                                                <li key={seasonKey} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
+                                                                    <button 
+                                                                        onClick={() => setExpandedSeason(isExpanded ? null : seasonKey)}
+                                                                        className="px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
+                                                                    >
+                                                                        <div className="flex items-center gap-3 sm:gap-5 truncate">
+                                                                            <div className={`flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300 ${index < 3 ? 'ring-2 ring-emerald-500/30' : ''}`}>
+                                                                                {index + 1}
+                                                                            </div>
+                                                                            <div className="truncate">
+                                                                                <span className="font-black text-gray-100 text-sm sm:text-lg tracking-tight uppercase group-hover:text-emerald-400 transition-colors truncate">
+                                                                                    {getDisplayName(season.golferId)}
+                                                                                </span>
+                                                                                <div className="text-[9px] font-black bg-emerald-950/40 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest w-max mt-0.5">
+                                                                                    {season.year} Season
+                                                                                </div>
+                                                                            </div>
                                                                         </div>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="text-right flex items-baseline gap-1 shrink-0 pl-2">
-                                                                    <span className="text-emerald-400 font-black text-xl sm:text-2xl tracking-tighter">
-                                                                        {season.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
-                                                                    </span>
-                                                                </div>
-                                                            </li>
-                                                        ))}
+                                                                        <div className="text-right flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
+                                                                            <span className="text-emerald-400 font-black text-xl sm:text-2xl tracking-tighter">
+                                                                                {season.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                                                                            </span>
+                                                                            <ChevronIcon expanded={isExpanded} className="text-gray-600 group-hover:text-emerald-500" />
+                                                                        </div>
+                                                                    </button>
+
+                                                                    {/* Expansion Breakdown for specific season */}
+                                                                    {isExpanded && (
+                                                                        <div className="bg-gray-950/40 px-4 sm:px-8 py-4 sm:py-6 border-t border-gray-800 animate-fade-in">
+                                                                            <div className="space-y-6">
+                                                                                {breakdown.map(([month, mData]) => (
+                                                                                    <div key={month} className="flex flex-col">
+                                                                                        <div className="flex justify-between items-center mb-3 pb-1.5 border-b border-gray-800">
+                                                                                            <h4 className="text-[10px] sm:text-xs font-black text-gray-500 uppercase tracking-widest">{month}</h4>
+                                                                                            <span className="text-[9px] font-black text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/20 uppercase">
+                                                                                                {mData.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} Total
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                                                            {mData.days.sort((a,b) => a.day - b.day).map((dayItem, dIdx) => (
+                                                                                                <li key={dIdx} className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-gray-900 border border-gray-800">
+                                                                                                    <span className="text-gray-400 font-bold text-[10px] uppercase">{month} {dayItem.day}</span>
+                                                                                                    <span className="text-emerald-400 font-black text-xs">+{dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}</span>
+                                                                                                </li>
+                                                                                            ))}
+                                                                                        </ul>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </li>
+                                                            );
+                                                        })}
                                                     </ul>
                                                 </div>
                                             </div>
@@ -548,16 +623,14 @@
                                                                 let monthlyData = {};
                                                                 if (isExpanded) {
                                                                     data.golfers[gId].events.forEach(e => {
-                                                                        const md = e.date.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+                                                                        const md = getMonthDay(e.date);
                                                                         if (md) {
-                                                                            const monthIdx = parseInt(md[2]);
-                                                                            const monthName = monthsList[monthIdx - 1] || "Unknown";
-                                                                            if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: monthIdx };
+                                                                            const monthName = monthsList[md.m - 1] || "Unknown";
+                                                                            if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
                                                                             monthlyData[monthName].total += e.rax;
-                                                                            const dVal = parseInt(md[3]);
-                                                                            const existingDay = monthlyData[monthName].days.find(d => d.day === dVal);
+                                                                            const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
                                                                             if (existingDay) existingDay.rax += e.rax;
-                                                                            else monthlyData[monthName].days.push({ day: dVal, rax: e.rax });
+                                                                            else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
                                                                         }
                                                                     });
                                                                 }
