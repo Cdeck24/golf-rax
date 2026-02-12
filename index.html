@@ -172,6 +172,7 @@
             // Date Selection State
             const [month, setMonth] = useState(new Date().getMonth() + 1);
             const [day, setDay] = useState(new Date().getDate());
+            const [viewMode, setViewMode] = useState('investments');
 
             useEffect(() => {
                 const attemptAutoFetch = async () => {
@@ -246,6 +247,18 @@
             
             const sortedYears = Object.keys(yearGroups).sort((a,b) => b - a);
             const grandTotal = otdEvents.reduce((sum, e) => sum + e.rax, 0);
+
+            const golferAggregates = useMemo(() => {
+                const groups = {};
+                otdEvents.forEach(e => {
+                    if (!groups[e.golferId]) groups[e.golferId] = { total: 0, years: {} };
+                    groups[e.golferId].total += e.rax;
+                    groups[e.golferId].years[e.year] = (groups[e.golferId].years[e.year] || 0) + e.rax;
+                });
+                return groups;
+            }, [otdEvents]);
+            
+            const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].total - golferAggregates[a].total);
 
             const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
             const daysInMonth = new Date(2024, month, 0).getDate(); // Leap year base for max days
@@ -332,6 +345,24 @@
                                     <TrophyIcon size={100} className="opacity-10 absolute right-4 top-1/2 transform -translate-y-1/2 rotate-12" />
                                 </div>
 
+                                {/* View Mode Toggles */}
+                                {otdEvents.length > 0 && (
+                                    <div className="flex justify-center mb-6">
+                                        <div className="flex bg-gray-200 p-1 rounded-xl inline-flex shadow-inner">
+                                            <button 
+                                                onClick={() => setViewMode('investments')}
+                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'investments' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                🏆 Best Investments
+                                            </button>
+                                            <button 
+                                                onClick={() => setViewMode('years')}
+                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                📅 Year-by-Year
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Year Breakdown */}
                                 {sortedYears.length === 0 ? (
                                     <div className="text-center p-12 bg-white rounded-2xl border border-gray-200 text-gray-500">
@@ -341,7 +372,41 @@
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
-                                        {sortedYears.map(year => {
+                                        {viewMode === 'investments' && (
+                                            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
+                                                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                                                    <h3 className="text-xl font-black text-gray-800">Top Earners Across All Years</h3>
+                                                </div>
+                                                <ul className="divide-y divide-gray-100">
+                                                    {sortedTopGolfers.map((gId, index) => {
+                                                        const data = golferAggregates[gId];
+                                                        const activeYears = Object.keys(data.years).sort((a,b) => b-a);
+                                                        return (
+                                                            <li key={gId} className="px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center hover:bg-gray-50 transition-colors gap-3">
+                                                                <div className="flex items-start gap-3">
+                                                                    <span className="text-gray-400 font-mono text-sm w-4 mt-1">{index + 1}.</span>
+                                                                    <div>
+                                                                        <div className="font-bold text-gray-800 text-lg">
+                                                                            {/^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId}
+                                                                        </div>
+                                                                        <div className="text-xs text-gray-500 mt-1 font-medium bg-gray-200 inline-block px-2 py-0.5 rounded">
+                                                                            {activeYears.length} {activeYears.length === 1 ? 'Year' : 'Years'}: {activeYears.join(', ')}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="sm:text-right ml-7 sm:ml-0">
+                                                                    <div className="text-green-700 font-black text-xl">
+                                                                        {data.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} <span className="text-sm font-semibold opacity-75">Rax</span>
+                                                                    </div>
+                                                                </div>
+                                                            </li>
+                                                        );
+                                                    })}
+                                                </ul>
+                                            </div>
+                                        )}
+
+                                        {viewMode === 'years' && sortedYears.map(year => {
                                             const data = yearGroups[year];
                                             const sortedGolfers = Object.keys(data.golfers).sort((a,b) => data.golfers[b] - data.golfers[a]);
                                             const maxRax = Math.max(...Object.values(data.golfers));
