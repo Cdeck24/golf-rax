@@ -29,189 +29,98 @@
         // --- Data Parsers ---
         const normalizeEvents = (jsonData, sourceYear) => {
             let events = [];
+            let localNames = {}; 
             
-            const checkIsDate = (str) => {
-                if(typeof str !== 'string') return false;
-                return !!str.match(/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})|(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})/);
-            };
-
-            // Custom Heuristic: Match specific format with first_name, last_name, player_id, and nested event earnings
-            if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
-                let isNewFormat = false;
-                for (let key in jsonData) {
-                    const playerObj = jsonData[key];
-                    if (playerObj && typeof playerObj === 'object' && ('first_name' in playerObj || 'last_name' in playerObj || 'total_earnings' in playerObj)) {
-                        isNewFormat = true;
-                        break;
-                    }
-                }
-                
-                if (isNewFormat) {
-                    for (let dictKey in jsonData) {
-                        const playerObj = jsonData[dictKey];
-                        const firstName = playerObj.first_name || "";
-                        const lastName = playerObj.last_name || "";
-                        const fullName = `${firstName} ${lastName}`.trim() || null;
-                        const finalPlayerId = playerObj.player_id ? String(playerObj.player_id) : dictKey;
-                        
-                        // Iterate through the keys looking for the nested event objects
-                        for (let eventKey in playerObj) {
-                            // Skip the metadata properties
-                            if (['first_name', 'last_name', 'player_id', 'total_earnings'].includes(eventKey)) continue;
-                            
-                            const eventObj = playerObj[eventKey];
-                            if (eventObj && typeof eventObj === 'object' && eventObj.date) {
-                                // Default to 0 if earnings isn't found, mapping earnings -> rax
-                                const raxVal = eventObj.earnings !== undefined ? eventObj.earnings : 0;
-                                
-                                events.push({
-                                    date: String(eventObj.date),
-                                    year: sourceYear || parseInt(String(eventObj.date).substring(0, 4)) || new Date().getFullYear(),
-                                    golferId: finalPlayerId,
-                                    golferName: fullName,
-                                    rax: parseFloat(raxVal)
-                                });
-                            }
-                        }
-                    }
-                    if (events.length > 0) return events;
-                }
-            }
-            
-            // Heuristic 1: Object mapping ID/Name -> Date -> Rax
-            if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
-                let isNestedMap = true;
-                let hasDates = false;
-                for (let key in jsonData) {
-                    if (jsonData[key] && typeof jsonData[key] === 'object' && !Array.isArray(jsonData[key])) {
-                        for (let innerKey in jsonData[key]) {
-                            if (checkIsDate(innerKey)) hasDates = true;
-                            break;
-                        }
-                    } else { isNestedMap = false; break; }
-                }
-                
-                if (isNestedMap && hasDates) {
-                    for (let golferId in jsonData) {
-                        for (let dateStr in jsonData[golferId]) {
-                            const raxVal = jsonData[golferId][dateStr];
-                            if (typeof raxVal === 'number' || (typeof raxVal === 'string' && !isNaN(parseFloat(raxVal)))) {
-                                events.push({
-                                    date: dateStr,
-                                    year: sourceYear || parseInt(dateStr.substring(0, 4)) || new Date().getFullYear(),
-                                    golferId: golferId,
-                                    golferName: /^\d+$/.test(golferId) ? null : golferId, // Extract name if key isn't numeric
-                                    rax: parseFloat(raxVal)
-                                });
-                            }
-                        }
-                    }
-                    return events;
-                }
-            }
-            
-            // Heuristic 2: Object mapping Date -> ID/Name -> Rax
-            if (typeof jsonData === 'object' && !Array.isArray(jsonData)) {
-                let isDateMap = true;
-                let validDateFound = false;
-                for (let key in jsonData) {
-                    if (checkIsDate(key)) validDateFound = true;
-                    if (typeof jsonData[key] !== 'object' || Array.isArray(jsonData[key])) isDateMap = false;
-                }
-                if (isDateMap && validDateFound) {
-                    for (let dateStr in jsonData) {
-                        for (let golferId in jsonData[dateStr]) {
-                            const raxVal = jsonData[dateStr][golferId];
-                            if (typeof raxVal === 'number' || !isNaN(parseFloat(raxVal))) {
-                                events.push({
-                                    date: dateStr,
-                                    year: sourceYear || parseInt(dateStr.substring(0, 4)) || new Date().getFullYear(),
-                                    golferId: golferId,
-                                    golferName: /^\d+$/.test(golferId) ? null : golferId,
-                                    rax: parseFloat(raxVal)
-                                });
-                            }
-                        }
-                    }
-                    return events;
-                }
-            }
-            
-            // Heuristic 3: Array of objects or flat mapping
-            let flatArr = [];
-            const flattenToArr = (obj) => {
-                if (Array.isArray(obj)) obj.forEach(flattenToArr);
-                else if (obj && typeof obj === 'object') {
-                    let hasDateOrYear = false, hasRax = false;
-                    for(let key in obj) {
-                       if(key.toLowerCase().match(/date|time|year/)) hasDateOrYear = true;
-                       if(key.toLowerCase().match(/rax|earn|rating|value|score/)) hasRax = true;
-                    }
-                    if(hasDateOrYear && hasRax) flatArr.push(obj);
-                    else for(let key in obj) flattenToArr(obj[key]);
-                }
-            }
-            flattenToArr(jsonData);
-            
-            if (flatArr.length > 0) {
-                flatArr.forEach(item => {
-                    const keys = Object.keys(item);
-                    const dateKey = keys.find(k => k.toLowerCase().match(/date|time/));
-                    const yearKey = keys.find(k => k.toLowerCase().match(/year/));
-                    const raxKey = keys.find(k => k.toLowerCase().match(/rax|earn|rating|value|score/));
-                    
-                    // Search for name or ID keys
-                    const nameKey = keys.find(k => k.toLowerCase().match(/name|player|golfer/) && !k.toLowerCase().match(/id/));
-                    const idKey = keys.find(k => k.toLowerCase().match(/id/));
-                    
-                    if ((dateKey || yearKey || sourceYear) && raxKey) {
-                        const dateStr = dateKey ? String(item[dateKey]) : null;
-                        const itemYear = yearKey ? parseInt(item[yearKey]) : (dateStr ? parseInt(String(dateStr).substring(0,4)) : sourceYear);
-                        
-                        let gId = idKey ? String(item[idKey]) : 'Unknown';
-                        let gName = nameKey ? String(item[nameKey]) : null;
-                        
-                        // Fallback to name if ID is unknown
-                        if (gName && gId === 'Unknown') gId = gName;
-                        
-                        events.push({
-                            date: dateStr || `${itemYear}-01-01`,
-                            year: itemYear || sourceYear || new Date().getFullYear(),
-                            golferId: gId,
-                            golferName: gName,
-                            rax: parseFloat(item[raxKey]) || 0
-                        });
-                    }
-                });
-                if (events.length > 0) return events;
-            }
-
-            // Heuristic 4 (Final Fallback): Deep scan for any number mapped to a date
-            const deepScan = (obj, parentKey) => {
+            // Pass 1: Extract all golfer names globally
+            const findNames = (obj) => {
                 if (!obj || typeof obj !== 'object') return;
+                
+                // Check if the current object itself is a player
+                if (obj.first_name || obj.last_name) {
+                    const name = `${obj.first_name || ''} ${obj.last_name || ''}`.trim();
+                    if (name && obj.player_id) localNames[String(obj.player_id)] = name;
+                }
+
                 for (let key in obj) {
-                    const val = obj[key];
-                    if (typeof val === 'number' && checkIsDate(key)) {
-                        events.push({
-                            date: key,
-                            year: sourceYear || parseInt(key.substring(0, 4)),
-                            golferId: parentKey,
-                            golferName: /^\d+$/.test(parentKey) ? null : parentKey,
-                            rax: val
-                        });
-                    } else if (typeof val === 'object') {
-                        deepScan(val, isNaN(key) ? key : parentKey);
+                    const child = obj[key];
+                    if (child && typeof child === 'object') {
+                        if (child.first_name || child.last_name) {
+                            const name = `${child.first_name || ''} ${child.last_name || ''}`.trim();
+                            if (name) {
+                                localNames[key] = name; // Map the parent key
+                                if (child.player_id) localNames[String(child.player_id)] = name; // Map the explicit player ID
+                            }
+                        }
+                        findNames(child);
                     }
                 }
             };
-            deepScan(jsonData, 'Unknown');
+            findNames(jsonData);
+
+            // Pass 2: Extract all events recursively
+            const findEvents = (obj, potentialPlayerId) => {
+                if (!obj || typeof obj !== 'object') return;
+
+                // Is this object an event? (Must have date and earnings/rax)
+                if (obj.date && (obj.earnings !== undefined || obj.rax !== undefined)) {
+                    const rax = obj.earnings !== undefined ? obj.earnings : obj.rax;
+                    const gId = String(obj.player_id || potentialPlayerId);
+                    
+                    // Only add if it's a valid date string
+                    if (typeof obj.date === 'string' && obj.date.match(/\d{4}/)) {
+                        events.push({
+                            date: String(obj.date),
+                            year: sourceYear || parseInt(String(obj.date).substring(0, 4)) || new Date().getFullYear(),
+                            golferId: gId,
+                            rax: parseFloat(rax) || 0
+                        });
+                    }
+                    return;
+                }
+
+                // Not an event, traverse deeper
+                for (let key in obj) {
+                    // Skip metadata keys to avoid deep scanning flat info
+                    if (['first_name', 'last_name', 'player_id', 'total_earnings'].includes(key)) continue;
+                    
+                    const child = obj[key];
+                    if (child && typeof child === 'object') {
+                        let nextId = potentialPlayerId;
+                        
+                        // Heuristic: If the child is an event itself, the container ID remains the same.
+                        // If the child is NOT an event, the current key is likely the Golfer ID container.
+                        if (child.date && (child.earnings !== undefined || child.rax !== undefined)) {
+                            nextId = potentialPlayerId;
+                        } else if (!Array.isArray(obj)) {
+                            nextId = key;
+                        }
+                        
+                        findEvents(child, nextId);
+                    }
+                }
+            };
             
-            return events;
+            findEvents(jsonData, "Unknown");
+            return { events, names: localNames };
+        };
+
+        const getMonthDay = (dateStr) => {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+            if (m) return { m: parseInt(m[2]), d: parseInt(m[3]) };
+            
+            m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+            if (m) return { m: parseInt(m[1]), d: parseInt(m[2]) };
+            
+            const d = new Date(dateStr);
+            if (!isNaN(d)) return { m: d.getMonth() + 1, d: d.getDate() };
+            return null;
         };
 
         // --- Main App Component ---
         const App = () => {
             const [events, setEvents] = useState([]);
+            const [golferNames, setGolferNames] = useState({});
             const [dataLoaded, setDataLoaded] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
             const [viewMode, setViewMode] = useState('investments');
@@ -220,25 +129,28 @@
                 const attemptAutoFetch = async () => {
                     setIsLoading(true);
                     let loadedAny = false;
-                    let localEvents = [];
+                    let allEvents = [];
+                    let allNames = {};
 
                     try {
                         for (let y = 2014; y <= 2025; y++) {
                             try {
                                 const jRes = await fetch(`./golf-otd/${y}-golf-data.json`);
                                 if (jRes.ok) {
-                                    localEvents = localEvents.concat(normalizeEvents(await jRes.json(), y));
+                                    const parsed = normalizeEvents(await jRes.json(), y);
+                                    allEvents = allEvents.concat(parsed.events);
+                                    allNames = { ...allNames, ...parsed.names };
                                     loadedAny = true;
                                 }
                             } catch (e) { /* Skip missing files silently */ }
                         }
                     } catch (e) {
-                        // Network error or local file block (CORS)
                         console.log("Auto-fetch blocked or failed, waiting for user upload.");
                     }
 
-                    if (loadedAny && localEvents.length > 0) {
-                        setEvents(localEvents);
+                    if (loadedAny && allEvents.length > 0) {
+                        setEvents(allEvents);
+                        setGolferNames(allNames);
                         setDataLoaded(true);
                     }
                     setIsLoading(false);
@@ -251,6 +163,7 @@
                 setIsLoading(true);
                 const files = Array.from(e.target.files);
                 let newEvents = [];
+                let newNames = {};
                 
                 for (let file of files) {
                     if (file.name.toLowerCase().endsWith('.json')) {
@@ -258,29 +171,21 @@
                             const json = JSON.parse(await file.text());
                             const yearMatch = file.name.match(/(\d{4})/);
                             const year = yearMatch ? parseInt(yearMatch[1]) : null;
-                            newEvents = newEvents.concat(normalizeEvents(json, year));
+                            const parsed = normalizeEvents(json, year);
+                            newEvents = newEvents.concat(parsed.events);
+                            newNames = { ...newNames, ...parsed.names };
                         } catch(err) { console.error("Error parsing", file.name) }
                     }
                 }
                 
                 setEvents(prev => [...prev, ...newEvents]);
+                setGolferNames(prev => ({...prev, ...newNames}));
                 setDataLoaded(true);
                 setIsLoading(false);
             };
 
-            // Extract Name Mapping intelligently across all events
-            const golferNameMap = useMemo(() => {
-                const map = {};
-                events.forEach(e => {
-                    if (e.golferName && !/^\d+$/.test(e.golferName)) {
-                        map[e.golferId] = e.golferName;
-                    }
-                });
-                return map;
-            }, [events]);
-
             const getDisplayName = (gId) => {
-                if (golferNameMap[gId]) return golferNameMap[gId];
+                if (golferNames[gId]) return golferNames[gId];
                 return /^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId;
             };
 
