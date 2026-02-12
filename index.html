@@ -61,13 +61,16 @@
             const findEvents = (obj, potentialPlayerId) => {
                 if (!obj || typeof obj !== 'object') return;
 
+                const dateKey = Object.keys(obj).find(k => /^(date|time)$/i.test(k));
+                const raxKey = Object.keys(obj).find(k => /^(earnings|rax|score)$/i.test(k));
+
                 // Is this object an event? (Must have date and earnings/rax)
-                if (obj.date && (obj.earnings !== undefined || obj.rax !== undefined)) {
-                    const rax = obj.earnings !== undefined ? obj.earnings : obj.rax;
-                    const gId = String(obj.player_id || potentialPlayerId);
+                if (dateKey && raxKey) {
+                    const rax = obj[raxKey];
+                    const gId = String(obj.player_id || obj.Player_ID || potentialPlayerId);
                     
-                    if (typeof obj.date === 'string' && obj.date.match(/\d{4}/)) {
-                        const dateStr = String(obj.date);
+                    if (typeof obj[dateKey] === 'string' && obj[dateKey].match(/\d{4}/)) {
+                        const dateStr = String(obj[dateKey]);
                         let extractedYear = null;
                         
                         // Extract year directly from the date string to prevent filename overrides
@@ -75,7 +78,6 @@
                         if (yMatch) extractedYear = parseInt(yMatch[1]);
                         
                         events.push({
-                            eventId: obj.id ? String(obj.id) : null,
                             date: dateStr,
                             year: extractedYear || sourceYear || new Date().getFullYear(),
                             golferId: gId,
@@ -88,15 +90,18 @@
                 // Not an event, traverse deeper
                 for (let key in obj) {
                     // Skip metadata keys to avoid deep scanning flat info
-                    if (['first_name', 'last_name', 'player_id', 'total_earnings'].includes(key)) continue;
+                    if (/^(first_name|last_name|player_id|total_earnings)$/i.test(key)) continue;
                     
                     const child = obj[key];
                     if (child && typeof child === 'object') {
                         let nextId = potentialPlayerId;
                         
+                        const childDateKey = Object.keys(child).find(k => /^(date|time)$/i.test(k));
+                        const childRaxKey = Object.keys(child).find(k => /^(earnings|rax|score)$/i.test(k));
+
                         // Heuristic: If the child is an event itself, the container ID remains the same.
                         // If the child is NOT an event, the current key is likely the Golfer ID container.
-                        if (child.date && (child.earnings !== undefined || child.rax !== undefined)) {
+                        if (childDateKey && childRaxKey) {
                             nextId = potentialPlayerId;
                         } else if (!Array.isArray(obj)) {
                             nextId = key;
@@ -138,7 +143,8 @@
             const deduplicateEvents = (eventList) => {
                 const map = new Map();
                 eventList.forEach(e => {
-                    const key = e.eventId ? `id_${e.eventId}` : `dedupe_${e.golferId}_${e.date}_${e.rax}`;
+                    // Using a composite key of ID + Date + Rax ensures cross-year IDs don't overwrite each other
+                    const key = `dedupe_${e.golferId}_${e.date}_${e.rax}`;
                     map.set(key, e);
                 });
                 return Array.from(map.values());
