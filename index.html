@@ -69,7 +69,7 @@
                     const rax = obj[raxKey];
                     const gId = String(obj.player_id || obj.Player_ID || potentialPlayerId);
                     
-                    if (typeof obj[dateKey] === 'string' && obj[dateKey].match(/\d{4}/)) {
+                    if (typeof obj[dateKey] === 'string' && obj[dateKey].trim() !== '') {
                         const dateStr = String(obj[dateKey]);
                         let extractedYear = null;
                         
@@ -143,8 +143,8 @@
             const deduplicateEvents = (eventList) => {
                 const map = new Map();
                 eventList.forEach(e => {
-                    // Using a composite key of ID + Date + Rax ensures cross-year IDs don't overwrite each other
-                    const key = `dedupe_${e.golferId}_${e.date}_${e.rax}`;
+                    // Incorporate the year into the key so separate seasons don't overwrite each other!
+                    const key = `dedupe_${e.golferId}_${e.year}_${e.date}_${e.rax}`;
                     map.set(key, e);
                 });
                 return Array.from(map.values());
