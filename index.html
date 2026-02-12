@@ -225,11 +225,6 @@
                             <h1 className="text-2xl font-bold flex items-center gap-2">
                                 <CalendarIcon /> Golf Yearly Rax Tracker
                             </h1>
-                            {dataLoaded && (
-                                <div className="text-sm bg-green-900 px-3 py-1 rounded-full opacity-80 border border-green-700">
-                                    {events.length.toLocaleString()} records loaded
-                                </div>
-                            )}
                         </div>
                     </header>
                     
@@ -257,14 +252,6 @@
                             </div>
                         ) : (
                             <div className="animate-fade-in">
-                                {/* Dashboard Controls */}
-                                <div className="flex justify-end mb-8 bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-700">
-                                    <label className="cursor-pointer text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 px-4 py-2 rounded-lg font-medium inline-flex items-center gap-2 transition-colors">
-                                        <UploadIcon size={16} /> Load Additional Data
-                                        <input type="file" multiple accept=".json" className="hidden" onChange={handleFiles} />
-                                    </label>
-                                </div>
-
                                 {/* Grand Total Header */}
                                 <div className="mb-8 p-8 bg-gradient-to-br from-green-700 to-green-900 text-white rounded-2xl shadow-lg flex justify-between items-center relative overflow-hidden border border-green-800">
                                     <div className="relative z-10">
