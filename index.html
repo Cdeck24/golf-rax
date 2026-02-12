@@ -218,6 +218,22 @@
             
             const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].total - golferAggregates[a].total);
 
+            // Calculate Best Individual Seasons (Golfer + Year combination)
+            const topSeasons = useMemo(() => {
+                const seasons = [];
+                Object.keys(golferAggregates).forEach(gId => {
+                    const yearsObj = golferAggregates[gId].years;
+                    Object.keys(yearsObj).forEach(year => {
+                        seasons.push({
+                            golferId: gId,
+                            year: year,
+                            rax: yearsObj[year]
+                        });
+                    });
+                });
+                return seasons.sort((a, b) => b.rax - a.rax);
+            }, [golferAggregates]);
+
             return (
                 <div className="pb-12">
                     <header className="bg-green-800 text-white p-6 shadow-md border-b border-green-900">
@@ -268,16 +284,21 @@
                                 {/* View Mode Toggles */}
                                 {events.length > 0 && (
                                     <div className="flex justify-center mb-6">
-                                        <div className="flex bg-gray-800 border border-gray-700 p-1 rounded-xl inline-flex shadow-inner">
+                                        <div className="flex bg-gray-800 border border-gray-700 p-1 rounded-xl shadow-inner overflow-x-auto max-w-full">
                                             <button 
                                                 onClick={() => setViewMode('investments')}
-                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'investments' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
-                                                🏆 Best Investments
+                                                className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'investments' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
+                                                🏆 All-Time Best
+                                            </button>
+                                            <button 
+                                                onClick={() => setViewMode('seasons')}
+                                                className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'seasons' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
+                                                🎯 Top Individual Years
                                             </button>
                                             <button 
                                                 onClick={() => setViewMode('years')}
-                                                className={`px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
-                                                📅 Year-by-Year Breakdown
+                                                className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm transition-all ${viewMode === 'years' ? 'bg-gray-700 text-green-400 shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>
+                                                📅 Year-by-Year
                                             </button>
                                         </div>
                                     </div>
@@ -292,6 +313,37 @@
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
+                                        {viewMode === 'seasons' && (
+                                            <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
+                                                <div className="bg-gray-800/80 px-6 py-4 border-b border-gray-700 flex justify-between items-center">
+                                                    <h3 className="text-xl font-black text-gray-100">Best Purchases (Golfer + Year)</h3>
+                                                </div>
+                                                <ul className="divide-y divide-gray-700/50">
+                                                    {topSeasons.map((season, index) => (
+                                                        <li key={`${season.golferId}-${season.year}`} className="px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center hover:bg-gray-700/30 transition-colors gap-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="text-gray-500 font-mono text-sm w-6 text-right">{index + 1}.</span>
+                                                                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+                                                                    <span className="font-bold text-gray-100 text-lg">
+                                                                        {getDisplayName(season.golferId)}
+                                                                    </span>
+                                                                    <span className="text-xs font-black bg-blue-900/40 text-blue-400 px-2.5 py-1 rounded border border-blue-800/50 uppercase tracking-wider w-max">
+                                                                        {season.year} Season
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="sm:text-right ml-10 sm:ml-0">
+                                                                <span className="text-green-400 font-black text-xl">
+                                                                    {season.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                                                                </span>
+                                                                <span className="text-sm font-semibold opacity-75 text-green-400 ml-1">Rax</span>
+                                                            </div>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+
                                         {viewMode === 'investments' && (
                                             <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden shadow-sm transition-shadow hover:shadow-md">
                                                 <div className="bg-gray-800/80 px-6 py-4 border-b border-gray-700 flex justify-between items-center">
