@@ -31,6 +31,50 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        // --- Constants ---
+        const RARITIES = [
+            { label: 'Base (1x)', value: 1 },
+            { label: 'Common (1.2x)', value: 1.2 },
+            { label: 'Uncommon (1.4x)', value: 1.4 },
+            { label: 'Rare (1.6x)', value: 1.6 },
+            { label: 'Epic (2x)', value: 2 },
+            { label: 'Leg 1 (5x)', value: 5 },
+            { label: 'Leg 2 (5.4x)', value: 5.4 },
+            { label: 'Leg 3 (5.8x)', value: 5.8 },
+            { label: 'Leg 4 (6.2x)', value: 6.2 },
+            { label: 'Leg 5 (6.6x)', value: 6.6 },
+            { label: 'Mystic 1 (10x)', value: 10 },
+            { label: 'Mystic 2 (10.2x)', value: 10.2 },
+            { label: 'Mystic 3 (10.4x)', value: 10.4 },
+            { label: 'Mystic 4 (10.6x)', value: 10.6 },
+            { label: 'Mystic 5 (10.8x)', value: 10.8 },
+            { label: 'Mystic 6 (11x)', value: 11 },
+            { label: 'Mystic 7 (11.2x)', value: 11.2 },
+            { label: 'Mystic 8 (11.4x)', value: 11.4 },
+            { label: 'Mystic 9 (11.6x)', value: 11.6 },
+            { label: 'Mystic 10 (11.8x)', value: 11.8 },
+            { label: 'Iconic 1 (20x)', value: 20 },
+            { label: 'Iconic 2 (20.3x)', value: 20.3 },
+            { label: 'Iconic 3 (20.6x)', value: 20.6 },
+            { label: 'Iconic 4 (20.9x)', value: 20.9 },
+            { label: 'Iconic 5 (21.2x)', value: 21.2 },
+            { label: 'Iconic 6 (21.5x)', value: 21.5 },
+            { label: 'Iconic 7 (21.8x)', value: 21.8 },
+            { label: 'Iconic 8 (22.1x)', value: 22.1 },
+            { label: 'Iconic 9 (22.4x)', value: 22.4 },
+            { label: 'Iconic 10 (22.7x)', value: 22.7 },
+            { label: 'Iconic 11 (23x)', value: 23 },
+            { label: 'Iconic 12 (23.3x)', value: 23.3 },
+            { label: 'Iconic 13 (23.6x)', value: 23.6 },
+            { label: 'Iconic 14 (23.9x)', value: 23.9 },
+            { label: 'Iconic 15 (24.2x)', value: 24.2 },
+            { label: 'Iconic 16 (24.5x)', value: 24.5 },
+            { label: 'Iconic 17 (24.8x)', value: 24.8 },
+            { label: 'Iconic 18 (25.1x)', value: 25.1 },
+            { label: 'Iconic 19 (25.4x)', value: 25.4 },
+            { label: 'Iconic 20 (25.7x)', value: 25.7 }
+        ];
+
         // --- SVGs & Icons ---
         const CalendarIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
         const UploadIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
@@ -136,10 +180,11 @@
             const [isLoading, setIsLoading] = useState(true);
             const [viewMode, setViewMode] = useState('investments');
             
-            // New state for Player Search, Accordion, and Year selector
+            // New state for Player Search, Accordion, Year selector, and Multiplier
             const [searchQuery, setSearchQuery] = useState('');
             const [expandedPlayer, setExpandedPlayer] = useState(null);
             const [selectedYear, setSelectedYear] = useState('');
+            const [currentMultiplier, setCurrentMultiplier] = useState(1);
 
             // --- Deduplication Helper ---
             const deduplicateEvents = (eventList) => {
@@ -215,17 +260,25 @@
                 return /^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId;
             };
 
-            // Aggregate data by year
+            // Scale events by current Rarity Multiplier
+            const adjustedEvents = useMemo(() => {
+                return events.map(e => ({
+                    ...e,
+                    rax: e.rax * currentMultiplier
+                }));
+            }, [events, currentMultiplier]);
+
+            // Aggregate data by year using ADJUSTED events
             const yearGroups = useMemo(() => {
                 const groups = {};
-                events.forEach(e => {
+                adjustedEvents.forEach(e => {
                     if (!groups[e.year]) groups[e.year] = { total: 0, golfers: {} };
                     groups[e.year].total += e.rax;
                     if (!groups[e.year].golfers[e.golferId]) groups[e.year].golfers[e.golferId] = 0;
                     groups[e.year].golfers[e.golferId] += e.rax;
                 });
                 return groups;
-            }, [events]);
+            }, [adjustedEvents]);
             
             const sortedYears = Object.keys(yearGroups).sort((a,b) => b - a);
 
@@ -236,10 +289,10 @@
                 }
             }, [sortedYears, selectedYear]);
 
-            // Aggregate data globally for "Player Search"
+            // Aggregate data globally for "Player Search" using ADJUSTED events
             const golferAggregates = useMemo(() => {
                 const groups = {};
-                events.forEach(e => {
+                adjustedEvents.forEach(e => {
                     if (!groups[e.golferId]) groups[e.golferId] = { total: 0, years: {} };
                     groups[e.golferId].total += e.rax;
                     groups[e.golferId].years[e.year] = (groups[e.golferId].years[e.year] || 0) + e.rax;
@@ -253,7 +306,7 @@
                 });
 
                 return groups;
-            }, [events]);
+            }, [adjustedEvents]);
             
             // Sort players by their BEST OVERALL SEASON
             const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].bestSeasonRax - golferAggregates[a].bestSeasonRax);
@@ -314,9 +367,9 @@
                         ) : (
                             <div className="animate-fade-in space-y-8">
                                 
-                                {/* View Mode Toggles */}
+                                {/* View Mode Toggles & Rarity Selector */}
                                 {events.length > 0 && (
-                                    <div className="flex justify-center sticky top-[88px] z-40 pb-4">
+                                    <div className="flex flex-col items-center sticky top-[88px] z-40 pb-4 gap-3">
                                         <div className="flex bg-gray-900/80 backdrop-blur-xl border border-gray-700/50 p-1.5 rounded-2xl shadow-xl overflow-x-auto max-w-full inline-flex mx-auto">
                                             <button 
                                                 onClick={() => setViewMode('investments')}
@@ -333,6 +386,25 @@
                                                 className={`whitespace-nowrap px-5 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 flex-1 ${viewMode === 'years' ? 'bg-emerald-500 text-gray-950 shadow-md shadow-emerald-500/20' : 'text-gray-400 hover:text-white hover:bg-gray-800/50'}`}>
                                                 📅 By Year
                                             </button>
+                                        </div>
+                                        
+                                        {/* Multiplier Dropdown */}
+                                        <div className="flex items-center gap-3 bg-gray-900/80 backdrop-blur-xl border border-gray-700/50 px-4 py-2 rounded-2xl shadow-xl max-w-full w-auto">
+                                            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest hidden sm:inline-block">Multiplier:</span>
+                                            <div className="relative w-full sm:w-auto">
+                                                <select 
+                                                    value={currentMultiplier}
+                                                    onChange={(e) => setCurrentMultiplier(parseFloat(e.target.value))}
+                                                    className="appearance-none bg-gray-950/80 border border-gray-700 text-emerald-400 font-bold rounded-xl pl-4 pr-10 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all cursor-pointer shadow-inner w-full sm:w-auto"
+                                                >
+                                                    {RARITIES.map(r => (
+                                                        <option key={r.label} value={r.value}>{r.label}</option>
+                                                    ))}
+                                                </select>
+                                                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-emerald-400">
+                                                    <ChevronIcon expanded={false} className="w-4 h-4" />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -397,7 +469,7 @@
                                                                                     </div>
                                                                                     <div className="text-xs text-gray-400 mt-1.5 font-medium flex items-center gap-2">
                                                                                         <span className="bg-emerald-900/30 text-emerald-400 px-2 py-0.5 rounded-md border border-emerald-800/50 font-bold tracking-wide">
-                                                                                            Best: {data.bestSeasonYear} ({data.bestSeasonRax.toLocaleString()} Rax)
+                                                                                            Best: {data.bestSeasonYear} ({data.bestSeasonRax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} Rax)
                                                                                         </span>
                                                                                     </div>
                                                                                 </div>
