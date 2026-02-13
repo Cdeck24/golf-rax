@@ -328,14 +328,38 @@
 
             const getDisplayName = (gId) => golferNames[gId] || (/^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId);
 
-            const adjustedEvents = useMemo(() => events.map(e => ({ ...e, rax: e.rax * currentMultiplier })), [events, currentMultiplier]);
+            const getMonthDay = (dateStr) => {
+                if (!dateStr || typeof dateStr !== 'string') return null;
+                // Matches YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+                let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+                if (m) return { y: parseInt(m[1]), m: parseInt(m[2]), d: parseInt(m[3]) };
+                
+                // Matches MM-DD-YYYY etc
+                m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+                if (m) return { y: parseInt(m[3]), m: parseInt(m[1]), d: parseInt(m[2]) };
+                
+                return null;
+            };
 
+            const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+            // Scale events by current Rarity Multiplier
+            const adjustedEvents = useMemo(() => {
+                return events.map(e => ({
+                    ...e,
+                    rax: e.rax * currentMultiplier
+                }));
+            }, [events, currentMultiplier]);
+
+            // Aggregate data by year using ADJUSTED events
             const yearGroups = useMemo(() => {
                 const groups = {};
                 adjustedEvents.forEach(e => {
                     if (!groups[e.year]) groups[e.year] = { total: 0, golfers: {} };
                     groups[e.year].total += e.rax;
-                    if (!groups[e.year].golfers[e.golferId]) groups[e.year].golfers[e.golferId] = { total: 0, events: [] };
+                    if (!groups[e.year].golfers[e.golferId]) {
+                        groups[e.year].golfers[e.golferId] = { total: 0, events: [] };
+                    }
                     groups[e.year].golfers[e.golferId].total += e.rax;
                     groups[e.year].golfers[e.golferId].events.push(e);
                 });
@@ -344,10 +368,14 @@
             
             const sortedYears = Object.keys(yearGroups).sort((a,b) => b - a);
 
+            // Set the default selected year for the By Year tab once data loads
             useEffect(() => {
-                if (sortedYears.length > 0 && !selectedYear) setSelectedYear(sortedYears[0]);
+                if (sortedYears.length > 0 && !selectedYear) {
+                    setSelectedYear(sortedYears[0]);
+                }
             }, [sortedYears, selectedYear]);
 
+            // Aggregate data globally for "Player Search" using ADJUSTED events
             const golferAggregates = useMemo(() => {
                 const groups = {};
                 adjustedEvents.forEach(e => {
@@ -355,16 +383,21 @@
                     groups[e.golferId].total += e.rax;
                     groups[e.golferId].years[e.year] = (groups[e.golferId].years[e.year] || 0) + e.rax;
                 });
+
+                // Calculate best overall season for ranking
                 Object.keys(groups).forEach(gId => {
                     const years = groups[gId].years;
                     groups[gId].bestSeasonRax = Math.max(...Object.values(years));
                     groups[gId].bestSeasonYear = Object.keys(years).find(y => years[y] === groups[gId].bestSeasonRax);
                 });
+
                 return groups;
             }, [adjustedEvents]);
             
+            // Sort players by their BEST OVERALL SEASON
             const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].bestSeasonRax - golferAggregates[a].bestSeasonRax);
 
+            // Calculate Best Individual Seasons (Golfer + Year combination)
             const topSeasons = useMemo(() => {
                 const seasons = [];
                 Object.keys(golferAggregates).forEach(gId => {
@@ -376,21 +409,28 @@
             }, [golferAggregates]);
 
             // Helper to get breakdown for a specific season
+            // CRITICAL FIX: Ensure getSeasonBreakdown returns an empty array if data missing, instead of crashing
             const getSeasonBreakdown = (gId, year) => {
-                const seasonalEvents = adjustedEvents.filter(e => e.golferId === gId && String(e.year) === String(year));
-                let monthlyData = {};
-                seasonalEvents.forEach(e => {
-                    const md = getMonthDay(e.date);
-                    if (md) {
-                        const monthName = monthsList[md.m - 1] || "Unknown";
-                        if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
-                        monthlyData[monthName].total += e.rax;
-                        const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
-                        if (existingDay) existingDay.rax += e.rax;
-                        else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
-                    }
-                });
-                return Object.entries(monthlyData).sort((a, b) => a[1].mIdx - b[1].mIdx);
+                try {
+                    // Explicitly convert year to string for comparison to avoid type mismatches
+                    const seasonalEvents = adjustedEvents.filter(e => e.golferId === gId && String(e.year) === String(year));
+                    let monthlyData = {};
+                    seasonalEvents.forEach(e => {
+                        const md = getMonthDay(e.date);
+                        if (md) {
+                            const monthName = monthsList[md.m - 1] || "Unknown";
+                            if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
+                            monthlyData[monthName].total += e.rax;
+                            const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
+                            if (existingDay) existingDay.rax += e.rax;
+                            else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
+                        }
+                    });
+                    return Object.entries(monthlyData).sort((a, b) => a[1].mIdx - b[1].mIdx);
+                } catch (e) {
+                    console.error("Error generating breakdown", e);
+                    return [];
+                }
             };
 
             return (
@@ -486,7 +526,7 @@
                                         
                                         {/* Player Search View (Interactive Accordion) */}
                                         {viewMode === 'investments' && (
-                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 200px)', minHeight: '400px' }}>
+                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-4 border-b border-gray-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 shrink-0">
                                                     <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase hidden sm:block">Leaderboard</h3>
                                                     <div className="relative w-full sm:max-w-xs">
@@ -676,21 +716,7 @@
                                                             
                                                             return sortedGolfers.map((gId, index) => {
                                                                 const isExpanded = expandedYearPlayer === gId;
-                                                                let monthlyData = {};
-                                                                if (isExpanded) {
-                                                                    data.golfers[gId].events.forEach(e => {
-                                                                        const md = getMonthDay(e.date);
-                                                                        if (md) {
-                                                                            const monthName = monthsList[md.m - 1] || "Unknown";
-                                                                            if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
-                                                                            monthlyData[monthName].total += e.rax;
-                                                                            const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
-                                                                            if (existingDay) existingDay.rax += e.rax;
-                                                                            else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
-                                                                        }
-                                                                    });
-                                                                }
-                                                                const sortedMonths = Object.entries(monthlyData).sort((a,b) => a[1].mIdx - b[1].mIdx);
+                                                                const breakdown = isExpanded ? getSeasonBreakdown(gId, selectedYear) : [];
 
                                                                 return (
                                                                     <li key={gId} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
@@ -718,7 +744,7 @@
                                                                         {isExpanded && (
                                                                             <div className="bg-gray-950/40 px-4 sm:px-8 py-4 sm:py-6 border-t border-gray-800 animate-fade-in">
                                                                                 <div className="space-y-6">
-                                                                                    {sortedMonths.map(([month, mData]) => (
+                                                                                    {breakdown.map(([month, mData]) => (
                                                                                         <div key={month} className="flex flex-col">
                                                                                             <div className="flex justify-between items-center mb-3 pb-1.5 border-b border-gray-800">
                                                                                                 <h4 className="text-[10px] sm:text-xs font-black text-gray-500 uppercase tracking-widest">{month}</h4>
