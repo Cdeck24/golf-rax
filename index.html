@@ -114,12 +114,14 @@
         const CalendarXIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="10" y1="14" x2="14" y2="18"></line><line x1="14" y1="14" x2="10" y2="18"></line></svg>;
         const SearchIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
         const ChevronIcon = ({expanded, className=""}) => <svg className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''} ${className}`} xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>;
+        const TrophyIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"></path></svg>;
 
         // --- Data Parsers ---
         const normalizeEvents = (jsonData, sourceYear) => {
             let events = [];
             let localNames = {}; 
             
+            // Pass 1: Extract all golfer names globally
             const findNames = (obj) => {
                 if (!obj || typeof obj !== 'object') return;
                 if (obj.first_name || obj.last_name) {
@@ -142,19 +144,26 @@
             };
             findNames(jsonData);
 
+            // Pass 2: Extract all events recursively
             const findEvents = (obj, potentialPlayerId) => {
                 if (!obj || typeof obj !== 'object') return;
+
                 const dateKey = Object.keys(obj).find(k => /^(date|time)$/i.test(k));
                 const raxKey = Object.keys(obj).find(k => /^(earnings|rax|score)$/i.test(k));
 
+                // Is this object an event? (Must have date and earnings/rax)
                 if (dateKey && raxKey) {
                     const rax = obj[raxKey];
                     const gId = String(obj.player_id || obj.Player_ID || potentialPlayerId);
+                    
                     if (typeof obj[dateKey] === 'string' && obj[dateKey].trim() !== '') {
                         const dateStr = String(obj[dateKey]);
                         let extractedYear = null;
+                        
+                        // Extract year directly from the date string to prevent filename overrides
                         const yMatch = dateStr.match(/\b(20\d{2})\b/);
                         if (yMatch) extractedYear = parseInt(yMatch[1]);
+                        
                         events.push({
                             date: dateStr,
                             year: extractedYear || sourceYear || new Date().getFullYear(),
@@ -165,16 +174,26 @@
                     return;
                 }
 
+                // Not an event, traverse deeper
                 for (let key in obj) {
+                    // Skip metadata keys to avoid deep scanning flat info
                     if (/^(first_name|last_name|player_id|total_earnings)$/i.test(key)) continue;
+                    
                     const child = obj[key];
                     if (child && typeof child === 'object') {
                         let nextId = potentialPlayerId;
+                        
                         const childDateKey = Object.keys(child).find(k => /^(date|time)$/i.test(k));
                         const childRaxKey = Object.keys(child).find(k => /^(earnings|rax|score)$/i.test(k));
-                        if (!(childDateKey && childRaxKey) && !Array.isArray(obj)) {
+
+                        // Heuristic: If the child is an event itself, the container ID remains the same.
+                        // If the child is NOT an event, the current key is likely the Golfer ID container.
+                        if (childDateKey && childRaxKey) {
+                            nextId = potentialPlayerId;
+                        } else if (!Array.isArray(obj)) {
                             nextId = key;
                         }
+                        
                         findEvents(child, nextId);
                     }
                 }
@@ -184,25 +203,15 @@
             return { events, names: localNames };
         };
 
-        const getMonthDay = (dateStr) => {
-            if (!dateStr || typeof dateStr !== 'string') return null;
-            // Matches YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
-            let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-            if (m) return { y: parseInt(m[1]), m: parseInt(m[2]), d: parseInt(m[3]) };
-            
-            // Matches MM-DD-YYYY etc
-            m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-            if (m) return { y: parseInt(m[3]), m: parseInt(m[1]), d: parseInt(m[2]) };
-            
-            return null;
-        };
-
+        // --- Main App Component ---
         const App = () => {
             const [events, setEvents] = useState([]);
             const [golferNames, setGolferNames] = useState({});
             const [dataLoaded, setDataLoaded] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
             const [viewMode, setViewMode] = useState('seasons'); 
+            
+            // New state for Player Search, Accordion, Year selector, and Multiplier
             const [searchQuery, setSearchQuery] = useState('');
             const [expandedPlayer, setExpandedPlayer] = useState(null);
             const [expandedYearPlayer, setExpandedYearPlayer] = useState(null);
@@ -210,6 +219,7 @@
             const [selectedYear, setSelectedYear] = useState('');
             const [currentMultiplier, setCurrentMultiplier] = useState(1);
 
+            // --- Deduplication Helper ---
             const deduplicateEvents = (eventList) => {
                 const map = new Map();
                 eventList.forEach(e => {
@@ -222,29 +232,74 @@
             useEffect(() => {
                 const attemptAutoFetch = async () => {
                     setIsLoading(true);
+                    
+                    const CACHE_KEY = 'golf_rax_data_v2';
+                    const CACHE_EXPIRY = 1000 * 60 * 60 * 24; // 24 hours
+
+                    // 1. Try Loading from Cache
+                    try {
+                        const cachedRaw = localStorage.getItem(CACHE_KEY);
+                        if (cachedRaw) {
+                            const cached = JSON.parse(cachedRaw);
+                            if (Date.now() - cached.timestamp < CACHE_EXPIRY) {
+                                console.log("Loaded data from cache");
+                                setEvents(cached.events);
+                                setGolferNames(cached.names);
+                                setDataLoaded(true);
+                                setIsLoading(false);
+                                return;
+                            }
+                        }
+                    } catch (e) { console.error("Cache read error", e); }
+
+                    // 2. Fetch if Cache Miss
                     let loadedAny = false;
                     let allEvents = [];
                     let allNames = {};
+
+                    // Parallel Fetching for speed
+                    const years = Array.from({length: 12}, (_, i) => 2014 + i); // 2014-2025
+                    
                     try {
-                        for (let y = 2014; y <= 2025; y++) {
-                            try {
-                                const jRes = await fetch(`/golf-otd/${y}-golf-data.json`);
-                                if (jRes.ok) {
-                                    const parsed = normalizeEvents(await jRes.json(), y);
-                                    allEvents = allEvents.concat(parsed.events);
-                                    allNames = { ...allNames, ...parsed.names };
-                                    loadedAny = true;
-                                }
-                            } catch (e) {}
-                        }
-                    } catch (e) {}
+                        const promises = years.map(y => 
+                            fetch(`/golf-otd/${y}-golf-data.json`)
+                                .then(res => res.ok ? res.json() : null)
+                                .then(json => json ? { year: y, data: json } : null)
+                                .catch(() => null)
+                        );
+
+                        const results = await Promise.all(promises);
+
+                        results.forEach(result => {
+                            if (result) {
+                                const parsed = normalizeEvents(result.data, result.year);
+                                allEvents = allEvents.concat(parsed.events);
+                                allNames = { ...allNames, ...parsed.names };
+                                loadedAny = true;
+                            }
+                        });
+                    } catch (e) {
+                        console.log("Auto-fetch blocked or failed, waiting for user upload.");
+                    }
+
                     if (loadedAny && allEvents.length > 0) {
-                        setEvents(deduplicateEvents(allEvents));
+                        const finalEvents = deduplicateEvents(allEvents);
+                        setEvents(finalEvents);
                         setGolferNames(allNames);
                         setDataLoaded(true);
+
+                        // 3. Save to Cache
+                        try {
+                            localStorage.setItem(CACHE_KEY, JSON.stringify({
+                                timestamp: Date.now(),
+                                events: finalEvents,
+                                names: allNames
+                            }));
+                        } catch (e) { console.warn("Cache quota exceeded"); }
                     }
                     setIsLoading(false);
                 };
+
                 attemptAutoFetch();
             }, []);
 
@@ -253,6 +308,7 @@
                 const files = Array.from(e.target.files);
                 let newEvents = [];
                 let newNames = {};
+                
                 for (let file of files) {
                     if (file.name.toLowerCase().endsWith('.json')) {
                         try {
@@ -410,7 +466,7 @@
                                                         <option key={r.label} value={r.value}>{r.label}</option>
                                                     ))}
                                                 </select>
-                                                <div className="absolute inset-y-0 right-0 flex items-center pr-2 sm:pr-3 pointer-events-none text-emerald-400">
+                                                <div className="absolute inset-y-0 right-0 flex items-center pr-2 sm:pr-3 pointer-events-none text-emerald-500">
                                                     <ChevronIcon expanded={false} className="w-3 h-3 sm:w-4 sm:h-4" />
                                                 </div>
                                             </div>
@@ -430,7 +486,7 @@
                                         
                                         {/* Player Search View (Interactive Accordion) */}
                                         {viewMode === 'investments' && (
-                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
+                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-4 border-b border-gray-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 shrink-0">
                                                     <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase hidden sm:block">Leaderboard</h3>
                                                     <div className="relative w-full sm:max-w-xs">
@@ -440,7 +496,7 @@
                                                         <input
                                                             type="text"
                                                             placeholder="SEARCH PLAYERS..."
-                                                            className="w-full bg-gray-950 border border-gray-100 text-gray-100 rounded-lg pl-8 sm:pl-9 pr-4 py-2 text-[10px] sm:text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder-gray-600 uppercase"
+                                                            className="w-full bg-gray-950 border border-gray-800 text-gray-100 rounded-lg pl-8 sm:pl-9 pr-4 py-2 text-[10px] sm:text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder-gray-600 uppercase"
                                                             value={searchQuery}
                                                             onChange={(e) => setSearchQuery(e.target.value)}
                                                         />
@@ -517,7 +573,7 @@
 
                                         {/* Best Seasons View (Interactive Accordion) */}
                                         {viewMode === 'seasons' && (
-                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
+                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-5 border-b border-gray-800 shrink-0">
                                                     <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase">Season Rankings</h3>
                                                 </div>
@@ -590,7 +646,7 @@
 
                                         {/* Year-by-Year View */}
                                         {viewMode === 'years' && (
-                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
+                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-4 sm:py-5 border-b border-gray-800 flex flex-row justify-between items-center gap-4 shrink-0">
                                                     <div className="flex items-center gap-3 flex-1">
                                                         <div className="relative w-full sm:w-auto">
