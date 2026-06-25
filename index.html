@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Golf OTD Guide</title>
     <!-- React and Tailwind -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <!-- Pinned Babel to a stable version to prevent sandboxed module worker crashes -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { 
@@ -53,7 +54,7 @@
 
     <div id="root" class="relative z-10"></div>
 
-    <script type="text/babel">
+    <script type="text/babel" data-presets="react,env">
         const { useState, useEffect, useMemo } = React;
 
         // --- Constants ---
@@ -114,14 +115,12 @@
         const CalendarXIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="10" y1="14" x2="14" y2="18"></line><line x1="14" y1="14" x2="10" y2="18"></line></svg>;
         const SearchIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
         const ChevronIcon = ({expanded, className=""}) => <svg className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''} ${className}`} xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>;
-        const TrophyIcon = ({size=24, className=""}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"></path></svg>;
 
         // --- Data Parsers ---
         const normalizeEvents = (jsonData, sourceYear) => {
             let events = [];
             let localNames = {}; 
             
-            // Pass 1: Extract all golfer names globally
             const findNames = (obj) => {
                 if (!obj || typeof obj !== 'object') return;
                 if (obj.first_name || obj.last_name) {
@@ -144,26 +143,19 @@
             };
             findNames(jsonData);
 
-            // Pass 2: Extract all events recursively
             const findEvents = (obj, potentialPlayerId) => {
                 if (!obj || typeof obj !== 'object') return;
-
                 const dateKey = Object.keys(obj).find(k => /^(date|time)$/i.test(k));
                 const raxKey = Object.keys(obj).find(k => /^(earnings|rax|score)$/i.test(k));
 
-                // Is this object an event? (Must have date and earnings/rax)
                 if (dateKey && raxKey) {
                     const rax = obj[raxKey];
                     const gId = String(obj.player_id || obj.Player_ID || potentialPlayerId);
-                    
                     if (typeof obj[dateKey] === 'string' && obj[dateKey].trim() !== '') {
                         const dateStr = String(obj[dateKey]);
                         let extractedYear = null;
-                        
-                        // Extract year directly from the date string to prevent filename overrides
                         const yMatch = dateStr.match(/\b(20\d{2})\b/);
                         if (yMatch) extractedYear = parseInt(yMatch[1]);
-                        
                         events.push({
                             date: dateStr,
                             year: extractedYear || sourceYear || new Date().getFullYear(),
@@ -174,26 +166,16 @@
                     return;
                 }
 
-                // Not an event, traverse deeper
                 for (let key in obj) {
-                    // Skip metadata keys to avoid deep scanning flat info
                     if (/^(first_name|last_name|player_id|total_earnings)$/i.test(key)) continue;
-                    
                     const child = obj[key];
                     if (child && typeof child === 'object') {
                         let nextId = potentialPlayerId;
-                        
                         const childDateKey = Object.keys(child).find(k => /^(date|time)$/i.test(k));
                         const childRaxKey = Object.keys(child).find(k => /^(earnings|rax|score)$/i.test(k));
-
-                        // Heuristic: If the child is an event itself, the container ID remains the same.
-                        // If the child is NOT an event, the current key is likely the Golfer ID container.
-                        if (childDateKey && childRaxKey) {
-                            nextId = potentialPlayerId;
-                        } else if (!Array.isArray(obj)) {
+                        if (!(childDateKey && childRaxKey) && !Array.isArray(obj)) {
                             nextId = key;
                         }
-                        
                         findEvents(child, nextId);
                     }
                 }
@@ -203,7 +185,19 @@
             return { events, names: localNames };
         };
 
-        // --- Main App Component ---
+        const getMonthDay = (dateStr) => {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            // Matches YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+            let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+            if (m) return { y: parseInt(m[1]), m: parseInt(m[2]), d: parseInt(m[3]) };
+            
+            // Matches MM-DD-YYYY etc
+            m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+            if (m) return { y: parseInt(m[3]), m: parseInt(m[1]), d: parseInt(m[2]) };
+            
+            return null;
+        };
+
         const App = () => {
             const [events, setEvents] = useState([]);
             const [golferNames, setGolferNames] = useState({});
@@ -211,15 +205,14 @@
             const [isLoading, setIsLoading] = useState(true);
             const [viewMode, setViewMode] = useState('seasons'); 
             
-            // New state for Player Search, Accordion, Year selector, and Multiplier
+            // State for Player Search, Accordion, Year selector, and Multiplier
             const [searchQuery, setSearchQuery] = useState('');
             const [expandedPlayer, setExpandedPlayer] = useState(null);
             const [expandedYearPlayer, setExpandedYearPlayer] = useState(null);
-            const [expandedSeason, setExpandedSeason] = useState(null); // Expansion state for Seasons tab
+            const [expandedSeason, setExpandedSeason] = useState(null); 
             const [selectedYear, setSelectedYear] = useState('');
             const [currentMultiplier, setCurrentMultiplier] = useState(1);
 
-            // --- Deduplication Helper ---
             const deduplicateEvents = (eventList) => {
                 const map = new Map();
                 eventList.forEach(e => {
@@ -236,13 +229,12 @@
                     const CACHE_KEY = 'golf_rax_data_v2';
                     const CACHE_EXPIRY = 1000 * 60 * 60 * 24; // 24 hours
 
-                    // 1. Try Loading from Cache
+                    // Try Loading from Cache
                     try {
                         const cachedRaw = localStorage.getItem(CACHE_KEY);
                         if (cachedRaw) {
                             const cached = JSON.parse(cachedRaw);
                             if (Date.now() - cached.timestamp < CACHE_EXPIRY) {
-                                console.log("Loaded data from cache");
                                 setEvents(cached.events);
                                 setGolferNames(cached.names);
                                 setDataLoaded(true);
@@ -252,12 +244,11 @@
                         }
                     } catch (e) { console.error("Cache read error", e); }
 
-                    // 2. Fetch if Cache Miss
+                    // Fetch if Cache Miss
                     let loadedAny = false;
                     let allEvents = [];
                     let allNames = {};
 
-                    // Parallel Fetching for speed
                     const years = Array.from({length: 12}, (_, i) => 2014 + i); // 2014-2025
                     
                     try {
@@ -278,9 +269,7 @@
                                 loadedAny = true;
                             }
                         });
-                    } catch (e) {
-                        console.log("Auto-fetch blocked or failed, waiting for user upload.");
-                    }
+                    } catch (e) {}
 
                     if (loadedAny && allEvents.length > 0) {
                         const finalEvents = deduplicateEvents(allEvents);
@@ -288,7 +277,6 @@
                         setGolferNames(allNames);
                         setDataLoaded(true);
 
-                        // 3. Save to Cache
                         try {
                             localStorage.setItem(CACHE_KEY, JSON.stringify({
                                 timestamp: Date.now(),
@@ -299,7 +287,6 @@
                     }
                     setIsLoading(false);
                 };
-
                 attemptAutoFetch();
             }, []);
 
@@ -308,7 +295,6 @@
                 const files = Array.from(e.target.files);
                 let newEvents = [];
                 let newNames = {};
-                
                 for (let file of files) {
                     if (file.name.toLowerCase().endsWith('.json')) {
                         try {
@@ -328,30 +314,8 @@
 
             const getDisplayName = (gId) => golferNames[gId] || (/^\d+$/.test(gId) ? `Golfer ID: ${gId}` : gId);
 
-            const getMonthDay = (dateStr) => {
-                if (!dateStr || typeof dateStr !== 'string') return null;
-                // Matches YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
-                let m = dateStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-                if (m) return { y: parseInt(m[1]), m: parseInt(m[2]), d: parseInt(m[3]) };
-                
-                // Matches MM-DD-YYYY etc
-                m = dateStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-                if (m) return { y: parseInt(m[3]), m: parseInt(m[1]), d: parseInt(m[2]) };
-                
-                return null;
-            };
+            const adjustedEvents = useMemo(() => events.map(e => ({ ...e, rax: e.rax * currentMultiplier })), [events, currentMultiplier]);
 
-            const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-            // Scale events by current Rarity Multiplier
-            const adjustedEvents = useMemo(() => {
-                return events.map(e => ({
-                    ...e,
-                    rax: e.rax * currentMultiplier
-                }));
-            }, [events, currentMultiplier]);
-
-            // Aggregate data by year using ADJUSTED events
             const yearGroups = useMemo(() => {
                 const groups = {};
                 adjustedEvents.forEach(e => {
@@ -368,14 +332,10 @@
             
             const sortedYears = Object.keys(yearGroups).sort((a,b) => b - a);
 
-            // Set the default selected year for the By Year tab once data loads
             useEffect(() => {
-                if (sortedYears.length > 0 && !selectedYear) {
-                    setSelectedYear(sortedYears[0]);
-                }
+                if (sortedYears.length > 0 && !selectedYear) setSelectedYear(sortedYears[0]);
             }, [sortedYears, selectedYear]);
 
-            // Aggregate data globally for "Player Search" using ADJUSTED events
             const golferAggregates = useMemo(() => {
                 const groups = {};
                 adjustedEvents.forEach(e => {
@@ -383,21 +343,16 @@
                     groups[e.golferId].total += e.rax;
                     groups[e.golferId].years[e.year] = (groups[e.golferId].years[e.year] || 0) + e.rax;
                 });
-
-                // Calculate best overall season for ranking
                 Object.keys(groups).forEach(gId => {
                     const years = groups[gId].years;
                     groups[gId].bestSeasonRax = Math.max(...Object.values(years));
                     groups[gId].bestSeasonYear = Object.keys(years).find(y => years[y] === groups[gId].bestSeasonRax);
                 });
-
                 return groups;
             }, [adjustedEvents]);
             
-            // Sort players by their BEST OVERALL SEASON
             const sortedTopGolfers = Object.keys(golferAggregates).sort((a,b) => golferAggregates[b].bestSeasonRax - golferAggregates[a].bestSeasonRax);
 
-            // Calculate Best Individual Seasons (Golfer + Year combination)
             const topSeasons = useMemo(() => {
                 const seasons = [];
                 Object.keys(golferAggregates).forEach(gId => {
@@ -408,34 +363,37 @@
                 return seasons.sort((a, b) => b.rax - a.rax);
             }, [golferAggregates]);
 
-            // Helper to get breakdown for a specific season
-            // CRITICAL FIX: Ensure getSeasonBreakdown returns an empty array if data missing, instead of crashing
-            const getSeasonBreakdown = (gId, year) => {
+            // Helper to get robust breakdown for a specific season
+            const getSeasonBreakdown = (gId, year, specificEvents = null) => {
                 try {
-                    // Explicitly convert year to string for comparison to avoid type mismatches
-                    const seasonalEvents = adjustedEvents.filter(e => e.golferId === gId && String(e.year) === String(year));
+                    const seasonalEvents = specificEvents || adjustedEvents.filter(e => e.golferId === gId && String(e.year) === String(year));
                     let monthlyData = {};
                     seasonalEvents.forEach(e => {
                         const md = getMonthDay(e.date);
-                        if (md) {
+                        if (md && !isNaN(md.m) && !isNaN(md.d)) {
                             const monthName = monthsList[md.m - 1] || "Unknown";
                             if (!monthlyData[monthName]) monthlyData[monthName] = { total: 0, days: [], mIdx: md.m };
-                            monthlyData[monthName].total += e.rax;
+                            monthlyData[monthName].total += (e.rax || 0);
+                            
                             const existingDay = monthlyData[monthName].days.find(d => d.day === md.d);
-                            if (existingDay) existingDay.rax += e.rax;
-                            else monthlyData[monthName].days.push({ day: md.d, rax: e.rax });
+                            if (existingDay) existingDay.rax += (e.rax || 0);
+                            else monthlyData[monthName].days.push({ day: md.d, rax: (e.rax || 0) });
                         }
                     });
                     return Object.entries(monthlyData).sort((a, b) => a[1].mIdx - b[1].mIdx);
-                } catch (e) {
-                    console.error("Error generating breakdown", e);
+                } catch (err) {
+                    console.error("Error formatting breakdown:", err);
                     return [];
                 }
             };
 
+            // Pre-calculate 'By Year' sorting inside the component to keep JSX clean
+            const activeYearData = selectedYear ? yearGroups[selectedYear] : null;
+            const activeYearGolfers = activeYearData ? Object.keys(activeYearData.golfers).sort((a,b) => activeYearData.golfers[b].total - activeYearData.golfers[a].total) : [];
+            const activeYearMaxRax = activeYearData ? Math.max(...Object.values(activeYearData.golfers).map(g => g.total)) : 0;
+
             return (
                 <div className="pb-12 sm:pb-24 overflow-x-hidden">
-                    {/* Header */}
                     <header className="bg-gray-950/80 backdrop-blur-xl border-b border-emerald-500/20 sticky top-0 z-50 shadow-lg">
                         <div className="max-w-4xl mx-auto flex justify-between items-center p-3 sm:p-5 px-4 sm:px-6">
                             <h1 className="text-lg sm:text-xl md:text-2xl font-black tracking-tighter flex items-center gap-2 sm:gap-3 text-white uppercase">
@@ -466,7 +424,7 @@
                                 
                                 <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-black uppercase tracking-widest inline-flex items-center gap-2 sm:gap-3 shadow-lg shadow-emerald-900/40 transition-all hover:scale-105 hover:-translate-y-1 text-sm sm:text-base">
                                     <UploadIcon size={18} className="sm:w-5 sm:h-5" />
-                                    Import Files
+                                    {'Import Files'}
                                     <input type="file" multiple accept=".json" className="hidden" onChange={handleFiles} />
                                 </label>
                             </div>
@@ -475,7 +433,7 @@
                                 
                                 {/* Navigation & Rarity Selector */}
                                 {events.length > 0 && (
-                                    <div className="flex flex-col items-center pb-2 sm:pb-4 gap-4 sm:gap-5 pt-2 sm:pt-0 mx--2 px-2 sm:mx-0 sm:px-0">
+                                    <div className="flex flex-col items-center pb-2 sm:pb-4 gap-4 sm:gap-5 pt-2 sm:pt-0 -mx-2 px-2 sm:mx-0 sm:px-0">
                                         <div className="flex glass-card p-1 sm:p-1.5 rounded-xl sm:rounded-2xl shadow-xl w-full sm:w-auto inline-grid grid-cols-3 mx-auto">
                                             <button 
                                                 onClick={() => setViewMode('seasons')}
@@ -519,14 +477,14 @@
                                     <div className="text-center p-12 sm:p-16 glass-card rounded-2xl sm:rounded-3xl border border-emerald-500/10 text-gray-500">
                                         <CalendarXIcon size={48} className="mx-auto mb-4 opacity-20 sm:w-16 sm:h-16" />
                                         <h3 className="text-xl sm:text-2xl font-black text-gray-300 tracking-tight uppercase">Leaderboard Empty</h3>
-                                        <p className="mt-2 text-sm sm:text-lg font-medium">Please import JSON scorecards.</p>
+                                        <p className="mt-2 text-sm sm:text-lg font-medium">{'Please import JSON scorecards.'}</p>
                                     </div>
                                 ) : (
                                     <div className="space-y-6 sm:space-y-8">
                                         
-                                        {/* Player Search View (Interactive Accordion) */}
+                                        {/* Player Search View */}
                                         {viewMode === 'investments' && (
-                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '400px' }}>
+                                            <div className="glass-card rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 200px)', minHeight: '400px' }}>
                                                 <div className="bg-gray-900/60 px-4 sm:px-6 md:px-8 py-4 border-b border-gray-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 shrink-0">
                                                     <h3 className="text-lg sm:text-xl font-black text-white tracking-tighter uppercase hidden sm:block">Leaderboard</h3>
                                                     <div className="relative w-full sm:max-w-xs">
@@ -562,9 +520,11 @@
 
                                                                 return (
                                                                     <li key={gId} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
-                                                                        <button 
+                                                                        <div 
+                                                                            role="button" 
+                                                                            tabIndex={0}
                                                                             onClick={() => setExpandedPlayer(isExpanded ? null : gId)}
-                                                                            className="px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
+                                                                            className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
                                                                         >
                                                                             <div className="flex items-center gap-3 sm:gap-5 truncate">
                                                                                 <div className="flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300">
@@ -585,7 +545,8 @@
                                                                                 </span>
                                                                                 <ChevronIcon expanded={isExpanded} className="text-gray-600 group-hover:text-emerald-500" />
                                                                             </div>
-                                                                        </button>
+                                                                        </div>
+                                                                        
                                                                         {isExpanded && (
                                                                             <div className="bg-gray-950/40 px-4 sm:px-8 py-3 sm:py-5 border-t border-gray-800 animate-fade-in">
                                                                                 <ul className="space-y-1.5 sm:space-y-2">
@@ -626,9 +587,11 @@
 
                                                             return (
                                                                 <li key={seasonKey} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
-                                                                    <button 
+                                                                    <div 
+                                                                        role="button" 
+                                                                        tabIndex={0}
                                                                         onClick={() => setExpandedSeason(isExpanded ? null : seasonKey)}
-                                                                        className="px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
+                                                                        className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
                                                                     >
                                                                         <div className="flex items-center gap-3 sm:gap-5 truncate">
                                                                             <div className={`flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300 ${index < 3 ? 'ring-2 ring-emerald-500/30' : ''}`}>
@@ -649,7 +612,7 @@
                                                                             </span>
                                                                             <ChevronIcon expanded={isExpanded} className="text-gray-600 group-hover:text-emerald-500" />
                                                                         </div>
-                                                                    </button>
+                                                                    </div>
 
                                                                     {/* Expansion Breakdown for specific season */}
                                                                     {isExpanded && (
@@ -664,10 +627,10 @@
                                                                                             </span>
                                                                                         </div>
                                                                                         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                                                            {mData.days.sort((a,b) => a.day - b.day).map((dayItem, dIdx) => (
+                                                                                            {mData.days.sort((a,b) => (a.day || 0) - (b.day || 0)).map((dayItem, dIdx) => (
                                                                                                 <li key={dIdx} className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-gray-900 border border-gray-800">
-                                                                                                    <span className="text-gray-400 font-bold text-[10px] uppercase">{month} {dayItem.day}</span>
-                                                                                                    <span className="text-emerald-400 font-black text-xs">+{dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}</span>
+                                                                                                    <span className="text-gray-400 font-bold text-[10px] uppercase">{month} {dayItem.day || ''}</span>
+                                                                                                    <span className="text-emerald-400 font-black text-xs">+{dayItem.rax ? dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 }) : '0'}</span>
                                                                                                 </li>
                                                                                             ))}
                                                                                         </ul>
@@ -716,13 +679,15 @@
                                                             
                                                             return sortedGolfers.map((gId, index) => {
                                                                 const isExpanded = expandedYearPlayer === gId;
-                                                                const breakdown = isExpanded ? getSeasonBreakdown(gId, selectedYear) : [];
+                                                                const breakdown = isExpanded ? getSeasonBreakdown(gId, selectedYear, data.golfers[gId].events) : [];
 
                                                                 return (
                                                                     <li key={gId} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
-                                                                        <button 
+                                                                        <div 
+                                                                            role="button" 
+                                                                            tabIndex={0}
                                                                             onClick={() => setExpandedYearPlayer(isExpanded ? null : gId)}
-                                                                            className="px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all w-full text-left gap-3"
+                                                                            className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all w-full text-left gap-3"
                                                                         >
                                                                             <div className="flex items-center gap-3 sm:gap-5 truncate">
                                                                                 <div className="flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300">
@@ -740,7 +705,7 @@
                                                                                 </span>
                                                                                 <ChevronIcon expanded={isExpanded} className="text-gray-600 group-hover:text-emerald-500" />
                                                                             </div>
-                                                                        </button>
+                                                                        </div>
                                                                         {isExpanded && (
                                                                             <div className="bg-gray-950/40 px-4 sm:px-8 py-4 sm:py-6 border-t border-gray-800 animate-fade-in">
                                                                                 <div className="space-y-6">
@@ -753,10 +718,10 @@
                                                                                                 </span>
                                                                                             </div>
                                                                                             <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                                                                {mData.days.sort((a,b) => a.day - b.day).map((dayItem, dIdx) => (
+                                                                                                {mData.days.sort((a,b) => (a.day || 0) - (b.day || 0)).map((dayItem, dIdx) => (
                                                                                                     <li key={dIdx} className="flex justify-between items-center px-3 py-2.5 rounded-lg bg-gray-900 border border-gray-800">
-                                                                                                        <span className="text-gray-400 font-bold text-[10px] uppercase">{month} {dayItem.day}</span>
-                                                                                                        <span className="text-emerald-400 font-black text-xs">+{dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}</span>
+                                                                                                        <span className="text-gray-400 font-bold text-[10px] uppercase">{month} {dayItem.day || ''}</span>
+                                                                                                        <span className="text-emerald-400 font-black text-xs">+{dayItem.rax ? dayItem.rax.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 }) : '0'}</span>
                                                                                                     </li>
                                                                                                 ))}
                                                                                             </ul>
