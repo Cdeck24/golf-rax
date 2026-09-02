@@ -224,8 +224,9 @@
             const [selectedYear, setSelectedYear] = useState('');
             const [currentMultiplier, setCurrentMultiplier] = useState(1);
             
-            // New state for API Ownership Tracking
+            // State and ref for bulk ownership tracking
             const [ownershipCache, setOwnershipCache] = useState({});
+            const fetchedSeasonsRef = React.useRef(new Set());
 
             const deduplicateEvents = (eventList) => {
                 const map = new Map();
@@ -399,52 +400,77 @@
                 }
             };
 
-// Helper to fetch Ownership data matching free-agents.html worker proxy
-            const fetchOwnership = async (gId, year, retries = 0) => {
-                const cacheKey = `${gId}-${year}`;
-                if (ownershipCache[cacheKey] !== undefined && retries === 0) return;
+// Bulk fetch all pass ownership counts for a season by paginating through ?before=
+            const fetchSeasonOwnership = async (season) => {
+                const sStr = String(season);
+                if (!season || fetchedSeasonsRef.current.has(sStr)) return;
+                fetchedSeasonsRef.current.add(sStr);
 
-                if (retries === 0) {
-                    setOwnershipCache(prev => ({ ...prev, [cacheKey]: '...' }));
+                let before = 0;
+                let hasMore = true;
+                let pageCount = 0;
+                const maxPages = 40;
+                const accumulated = {};
+
+                while (hasMore && pageCount < maxPages) {
+                    pageCount++;
+                    try {
+                        const token = generateRequestToken();
+                        const deviceUuid = crypto.randomUUID();
+                        const targetUrl = `https://web.realapp.com/userpassshop/golf/season/${season}/entity/player/section/hotseason?before=${before}`;
+                        const proxyUrl = `${workerProxy}?url=${encodeURIComponent(targetUrl)}&auth=${encodeURIComponent(REAL_AUTH_TOKEN)}&uuid=${deviceUuid}&token=${token}`;
+
+                        const res = await fetch(proxyUrl);
+                        if (!res.ok) break;
+
+                        const data = await res.json();
+                        const items = data.feedItems || data.items || [];
+                        if (!Array.isArray(items) || items.length === 0) break;
+
+                        items.forEach(item => {
+                            const gId = String(item.entityId || item.entity?.id || item.id);
+                            const countVal = item.count ?? item.total ?? item.rankDisplay?.injection?.total?.value;
+                            if (gId && countVal !== undefined) {
+                                const formatted = typeof countVal === 'number' ? countVal.toLocaleString() : String(countVal);
+                                accumulated[`${gId}-${season}`] = formatted;
+                            }
+                        });
+
+                        const lastItem = items[items.length - 1];
+                        const nextBefore = data.nextBefore ?? (lastItem ? lastItem.id : null);
+
+                        if (!nextBefore || nextBefore === before) {
+                            hasMore = false;
+                        } else {
+                            before = nextBefore;
+                        }
+
+                        await new Promise(r => setTimeout(r, 120));
+                    } catch (err) {
+                        console.error(`Error fetching hotseason page for ${season}:`, err);
+                        break;
+                    }
                 }
 
-                try {
-                    const token = generateRequestToken();
-                    const deviceUuid = crypto.randomUUID();
-                    const targetUrl = `https://web.realapp.com/userpasses/golf/type/player/entity/${gId}/leaderboard?before=0&rarity=all&season=${year}&sort=boostvalue`;
-                    
-                    // Pass headers via URL parameters to prevent preflight CORS blocks
-                    const proxyUrl = `${workerProxy}?url=${encodeURIComponent(targetUrl)}&auth=${encodeURIComponent(REAL_AUTH_TOKEN)}&uuid=${deviceUuid}&token=${token}`;
-                    
-                    const res = await fetch(proxyUrl);
-
-                    // Handle rate limits gracefully with dynamic backoff
-                    if (res.status === 429 || res.status === 502) {
-                        if (retries < 3) {
-                            await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
-                            return fetchOwnership(gId, year, retries + 1);
-                        }
-                        throw new Error(`API Rate Limit Hit (${res.status})`);
-                    }
-
-                    if (!res.ok) throw new Error(`API Error: ${res.status}`);
-                    
-                    const data = await res.json();
-                    
-                    // Extract total value from rankDisplay injection
-                    let count = '0';
-                    if (data?.rankDisplay?.injection?.total?.value) {
-                        count = data.rankDisplay.injection.total.value;
-                    } else if (data?.feedItems?.[0]?.count) {
-                        count = Number(data.feedItems[0].count).toLocaleString();
-                    }
-
-                    setOwnershipCache(prev => ({ ...prev, [cacheKey]: count }));
-                } catch (err) {
-                    console.error(`Failed to fetch card ownership for ${gId} (${year}):`, err);
-                    setOwnershipCache(prev => ({ ...prev, [cacheKey]: 'N/A' }));
+                if (Object.keys(accumulated).length > 0) {
+                    setOwnershipCache(prev => ({ ...prev, ...accumulated }));
                 }
             };
+
+            // Trigger bulk fetch whenever a year is selected in "By Year"
+            useEffect(() => {
+                if (selectedYear) {
+                    fetchSeasonOwnership(selectedYear);
+                }
+            }, [selectedYear]);
+
+            // Trigger bulk fetch for unique seasons shown in the "Seasons" tab
+            useEffect(() => {
+                if (topSeasons.length > 0) {
+                    const uniqueSeasons = [...new Set(topSeasons.slice(0, 40).map(s => s.year))];
+                    uniqueSeasons.forEach(yr => fetchSeasonOwnership(yr));
+                }
+            }, [topSeasons]);
 
             // Pre-calculate 'By Year' sorting inside the component to keep JSX clean
             const activeYearData = selectedYear ? yearGroups[selectedYear] : null;
@@ -577,26 +603,34 @@
                                                                 const isExpanded = expandedPlayer === gId;
 
                                                                 return (
-                                                                    <li key={gId} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
-                                                                        <div 
-                                                                            role="button" 
-                                                                            tabIndex={0}
-                                                                            onClick={() => setExpandedPlayer(isExpanded ? null : gId)}
-                                                                            className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
-                                                                        >
-                                                                            <div className="flex items-center gap-3 sm:gap-5 truncate">
-                                                                                <div className="flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300">
-                                                                                    {index + 1}
-                                                                                </div>
-                                                                                <div className="truncate">
-                                                                                    <div className="font-black text-gray-100 text-sm sm:text-lg tracking-tight uppercase group-hover:text-emerald-400 transition-colors truncate">
-                                                                                        {getDisplayName(gId)}
-                                                                                    </div>
-                                                                                    <div className="text-[9px] sm:text-[10px] text-emerald-500 mt-0.5 sm:mt-1 font-black tracking-widest uppercase truncate opacity-80">
-                                                                                        Best: {data.bestSeasonYear} Season
-                                                                                    </div>
+                                                                    <li key={seasonKey} className="flex flex-col group border-l-4 border-transparent hover:border-emerald-500 transition-all">
+                                                                    <div 
+                                                                        role="button" 
+                                                                        tabIndex={0}
+                                                                        onClick={() => setExpandedSeason(isExpanded ? null : seasonKey)}
+                                                                        className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all text-left gap-3 w-full"
+                                                                    >
+                                                                        <div className="flex items-center gap-3 sm:gap-5 truncate">
+                                                                            <div className={`flex shrink-0 items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full golf-ball-rank text-[10px] sm:text-xs font-black text-gray-900 border border-gray-300 ${index < 3 ? 'ring-2 ring-emerald-500/30' : ''}`}>
+                                                                                {index + 1}
+                                                                            </div>
+                                                                            <div className="truncate">
+                                                                                <span className="font-black text-gray-100 text-sm sm:text-lg tracking-tight uppercase group-hover:text-emerald-400 transition-colors truncate">
+                                                                                    {getDisplayName(season.golferId)}
+                                                                                </span>
+                                                                                <div className="flex items-center gap-2 mt-0.5">
+                                                                                    <span className="text-[9px] font-black bg-emerald-950/40 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest w-max">
+                                                                                        {season.year} Season
+                                                                                    </span>
+                                                                                    {currentOwnership && (
+                                                                                        <span className="flex items-center gap-1 text-[9px] font-black text-gray-400 bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800 uppercase tracking-widest w-max">
+                                                                                            <UsersIcon size={10} className="text-emerald-400" />
+                                                                                            <span>{currentOwnership} Owners</span>
+                                                                                        </span>
+                                                                                    )}
                                                                                 </div>
                                                                             </div>
+                                                                        </div>
                                                                             <div className="text-right flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
                                                                                 <span className="text-gray-100 font-black text-lg sm:text-xl tracking-tighter">
                                                                                     {data.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
@@ -757,10 +791,7 @@
                                                                     <div 
                                                                         role="button" 
                                                                         tabIndex={0}
-                                                                        onClick={() => {
-                                                                            setExpandedYearPlayer(isExpanded ? null : gId);
-                                                                            if (!isExpanded) fetchOwnership(gId, selectedYear);
-                                                                        }}
+                                                                        onClick={() => setExpandedYearPlayer(isExpanded ? null : gId)}
                                                                         className="cursor-pointer px-4 sm:px-6 md:px-8 py-4 sm:py-5 flex flex-row justify-between items-center hover:bg-emerald-500/5 transition-all w-full text-left gap-3"
                                                                     >
                                                                         <div className="flex items-center gap-3 sm:gap-5 truncate">
@@ -771,6 +802,12 @@
                                                                                 <span className="font-black text-gray-100 text-sm sm:text-lg uppercase tracking-tight truncate group-hover:text-emerald-400 transition-colors">
                                                                                     {getDisplayName(gId)}
                                                                                 </span>
+                                                                                {currentOwnership && (
+                                                                                    <div className="flex items-center gap-1 text-[9px] font-black text-gray-400 mt-0.5 uppercase tracking-widest">
+                                                                                        <UsersIcon size={10} className="text-emerald-400" />
+                                                                                        <span>{currentOwnership} Owners</span>
+                                                                                    </div>
+                                                                                )}
                                                                             </div>
                                                                         </div>
                                                                         <div className="text-right flex items-center gap-3 sm:gap-4 shrink-0 pl-2">
