@@ -9,6 +9,8 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Required for Token Generation -->
+    <script src="https://cdn.jsdelivr.net/npm/hashids@2.2.10/dist/hashids.min.js"></script>
     <style>
         body { 
             font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -55,7 +57,16 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
+        // --- Real App Proxy & Auth Configuration ---
+        const workerProxy = 'https://rda-worker.coledecker04.workers.dev/';
+        const REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f';
 
+        function generateRequestToken() {
+            const timestampMs = Date.now();
+            // @ts-ignore
+            const hasher = new Hashids("realwebapp", 16);
+            return hasher.encode(timestampMs);
+        }
         // --- Constants ---
         const RARITIES = [
             { label: 'General (1x)', value: 1 },
@@ -388,36 +399,49 @@
                 }
             };
 
-            // Helper to fetch Ownership data using a CORS proxy
-            const fetchOwnership = async (gId, year) => {
+// Helper to fetch Ownership data matching free-agents.html worker proxy
+            const fetchOwnership = async (gId, year, retries = 0) => {
                 const cacheKey = `${gId}-${year}`;
-                if (ownershipCache[cacheKey] !== undefined) return; // Already fetched or fetching
+                if (ownershipCache[cacheKey] !== undefined && retries === 0) return;
 
-                // Set to 'Loading' temporarily to prevent duplicate requests
-                setOwnershipCache(prev => ({ ...prev, [cacheKey]: '...' }));
+                if (retries === 0) {
+                    setOwnershipCache(prev => ({ ...prev, [cacheKey]: '...' }));
+                }
 
                 try {
-                    const targetUrl = encodeURIComponent(`https://web.realapp.com/userpasses/golf/type/player/entity/${gId}/leaderboard?before=0&rarity=all&season=${year}&sort=boostvalue`);
-                    const proxyUrl = `https://corsproxy.io/?${targetUrl}`;
+                    const token = generateRequestToken();
+                    const deviceUuid = crypto.randomUUID();
+                    const targetUrl = `https://web.realapp.com/userpasses/golf/type/player/entity/${gId}/leaderboard?before=0&rarity=all&season=${year}&sort=boostvalue`;
                     
-                    const response = await fetch(proxyUrl);
-                    if (!response.ok) throw new Error('API Request Failed');
+                    // Pass headers via URL parameters to prevent preflight CORS blocks
+                    const proxyUrl = `${workerProxy}?url=${encodeURIComponent(targetUrl)}&auth=${encodeURIComponent(REAL_AUTH_TOKEN)}&uuid=${deviceUuid}&token=${token}`;
                     
-                    const data = await response.json();
-                    
-                    // Extract total.value from payload
-                    if (data && data.rankDisplay && data.rankDisplay.injection && data.rankDisplay.injection.total && data.rankDisplay.injection.total.value) {
-                        setOwnershipCache(prev => ({ ...prev, [cacheKey]: data.rankDisplay.injection.total.value }));
-                    } else {
-                        // Fallback if data structure is missing but count exists in feedItems
-                        if (data && data.feedItems && data.feedItems.length > 0 && data.feedItems[0].count) {
-                            setOwnershipCache(prev => ({ ...prev, [cacheKey]: data.feedItems[0].count.toLocaleString() }));
-                        } else {
-                            setOwnershipCache(prev => ({ ...prev, [cacheKey]: '0' }));
+                    const res = await fetch(proxyUrl);
+
+                    // Handle rate limits gracefully with dynamic backoff
+                    if (res.status === 429 || res.status === 502) {
+                        if (retries < 3) {
+                            await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
+                            return fetchOwnership(gId, year, retries + 1);
                         }
+                        throw new Error(`API Rate Limit Hit (${res.status})`);
                     }
+
+                    if (!res.ok) throw new Error(`API Error: ${res.status}`);
+                    
+                    const data = await res.json();
+                    
+                    // Extract total value from rankDisplay injection
+                    let count = '0';
+                    if (data?.rankDisplay?.injection?.total?.value) {
+                        count = data.rankDisplay.injection.total.value;
+                    } else if (data?.feedItems?.[0]?.count) {
+                        count = Number(data.feedItems[0].count).toLocaleString();
+                    }
+
+                    setOwnershipCache(prev => ({ ...prev, [cacheKey]: count }));
                 } catch (err) {
-                    console.error("Ownership Fetch Error:", err);
+                    console.error(`Failed to fetch card ownership for ${gId} (${year}):`, err);
                     setOwnershipCache(prev => ({ ...prev, [cacheKey]: 'N/A' }));
                 }
             };
